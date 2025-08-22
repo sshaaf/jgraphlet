@@ -1,6 +1,7 @@
 # 🚀 JGraphlet - The Tiny Powerhouse for Java Task Pipelines
 [![Java 21](https://img.shields.io/badge/Java-21-blue.svg)](https://openjdk.org/projects/jdk/21/)
 [![Maven 3](https://img.shields.io/badge/Maven-3-orange.svg)](https://maven.apache.org/)
+[![Build](https://github.com/sshaaf/jgraphlet/actions/workflows/ci.yml/badge.svg)](https://github.com/sshaaf/jgraphlet/actions/workflows/ci.yml)
 
 > **Zero dependencies.** ✨
 
