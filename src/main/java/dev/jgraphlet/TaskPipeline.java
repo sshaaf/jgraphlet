@@ -1,9 +1,12 @@
 package dev.jgraphlet;
 
+import com.sun.tools.javac.Main;
+
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 /**
@@ -11,6 +14,9 @@ import java.util.stream.Collectors;
  * It supports parallel execution of independent tasks, caching, and complex dependencies.
  */
 public class TaskPipeline {
+
+    private static final Logger logger = Logger.getLogger(TaskPipeline.class.getName());
+
     private final Map<String, Task<?, ?>> tasks = new LinkedHashMap<>();
     private final Map<String, List<String>> graph = new HashMap<>();
     private final Map<CacheKey, Object> cache = new HashMap<>();
@@ -33,7 +39,7 @@ public class TaskPipeline {
      * @return The pipeline instance for fluent chaining.
      */
     public TaskPipeline add(String taskName, Task<?, ?> task) {
-        System.out.println("ADDING: " + taskName);
+        logger.fine("ADDING: " + taskName);
         if (tasks.containsKey(taskName)) {
             throw new IllegalArgumentException("Task '" + taskName + "' has already been added.");
         }
@@ -133,7 +139,7 @@ public class TaskPipeline {
                     if (currentTask.isCacheable()) {
                         CacheKey cacheKey = new CacheKey(taskName, input);
                         if (cache.containsKey(cacheKey)) {
-                            System.out.println("HIT: Found '" + taskName + "' in cache.");
+                            logger.fine("HIT: Found '" + taskName + "' in cache.");
                             return CompletableFuture.completedFuture(cache.get(cacheKey));
                         }
                     }
@@ -141,7 +147,7 @@ public class TaskPipeline {
                     throw new TaskRunException("Task '" + taskName + "' was not found in the pipeline.");
                 }
 
-                System.out.println("EXEC: Executing '" + taskName + "'.");
+                logger.fine("EXEC: Executing '" + taskName + "'.");
                 CompletableFuture<Object> taskResultFuture = currentTask.execute(input, context);
 
                 if (currentTask.isCacheable()) {
