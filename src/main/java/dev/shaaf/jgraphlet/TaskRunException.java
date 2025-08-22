@@ -1,4 +1,4 @@
-package dev.jgraphlet;
+package dev.shaaf.jgraphlet;
 
 public class TaskRunException extends RuntimeException {
 

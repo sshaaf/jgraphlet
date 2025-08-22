@@ -1,4 +1,4 @@
-package dev.jgraphlet;
+package dev.shaaf.jgraphlet;
 
 import org.junit.jupiter.api.Test;
 

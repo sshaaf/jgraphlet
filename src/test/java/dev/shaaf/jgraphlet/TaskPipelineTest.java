@@ -1,4 +1,4 @@
-package dev.jgraphlet;
+package dev.shaaf.jgraphlet;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;

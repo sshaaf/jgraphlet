@@ -33,23 +33,26 @@ mvn test
 ### Your First Pipeline
 
 ```java
-import dev.jgraphlet.*;
+import dev.shaaf.jgraphlet.Task;
+import dev.shaaf.jgraphlet.TaskPipeline;
 
 // Create a simple async task
-Task<String, Integer> lengthTask = (input, context) -> 
-    CompletableFuture.supplyAsync(() -> input.length());
+Task<String, Integer> lengthTask = (input, context) ->
+        CompletableFuture.supplyAsync(() -> input.length());
 
-Task<Integer, String> formatTask = (length, context) -> 
-    CompletableFuture.supplyAsync(() -> "Length: " + length);
+        Task<Integer, String> formatTask = (length, context) ->
+                CompletableFuture.supplyAsync(() -> "Length: " + length);
 
-// Chain them together
-TaskPipeline pipeline = new TaskPipeline()
-    .add("length", lengthTask)
-    .then("format", formatTask);
+        // Chain them together
+        TaskPipeline pipeline = new TaskPipeline()
+                .add("length", lengthTask)
+                .then("format", formatTask);
 
-// Execute and get results!
-String result = (String) pipeline.run("Hello World!").join();
-System.out.println(result); // "Length: 12"
+        // Execute and get results!
+        String result = (String) pipeline.run("Hello World!").join();
+System.out.
+
+        println(result); // "Length: 12"
 ```
 
 **That's it!** You just built your first async pipeline! 🎉

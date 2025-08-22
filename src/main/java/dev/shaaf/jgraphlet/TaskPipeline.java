@@ -1,6 +1,4 @@
-package dev.jgraphlet;
-
-import com.sun.tools.javac.Main;
+package dev.shaaf.jgraphlet;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
