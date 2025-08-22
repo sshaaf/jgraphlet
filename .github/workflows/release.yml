@@ -73,17 +73,33 @@ jobs:
         
     - name: Upload to Central Portal
       run: |
-        # Create bundle for Central Portal upload with only required files (using zip to avoid META-INF)
+        # Create bundle for Central Portal upload with Maven directory structure and checksums
         cd target
-        zip ../jgraphlet-${{ env.RELEASE_VERSION }}-bundle.jar \
-          jgraphlet-${{ env.RELEASE_VERSION }}.jar \
-          jgraphlet-${{ env.RELEASE_VERSION }}.pom \
-          jgraphlet-${{ env.RELEASE_VERSION }}-sources.jar \
-          jgraphlet-${{ env.RELEASE_VERSION }}-javadoc.jar \
-          jgraphlet-${{ env.RELEASE_VERSION }}.jar.asc \
-          jgraphlet-${{ env.RELEASE_VERSION }}.pom.asc \
-          jgraphlet-${{ env.RELEASE_VERSION }}-sources.jar.asc \
-          jgraphlet-${{ env.RELEASE_VERSION }}-javadoc.jar.asc
+        
+        # Create Maven directory structure
+        MAVEN_DIR="dev/shaaf/jgraphlet/jgraphlet/${{ env.RELEASE_VERSION }}"
+        mkdir -p "$MAVEN_DIR"
+        
+        # Copy files to Maven structure
+        cp jgraphlet-${{ env.RELEASE_VERSION }}.jar "$MAVEN_DIR/"
+        cp jgraphlet-${{ env.RELEASE_VERSION }}.pom "$MAVEN_DIR/"
+        cp jgraphlet-${{ env.RELEASE_VERSION }}-sources.jar "$MAVEN_DIR/"
+        cp jgraphlet-${{ env.RELEASE_VERSION }}-javadoc.jar "$MAVEN_DIR/"
+        cp jgraphlet-${{ env.RELEASE_VERSION }}.jar.asc "$MAVEN_DIR/"
+        cp jgraphlet-${{ env.RELEASE_VERSION }}.pom.asc "$MAVEN_DIR/"
+        cp jgraphlet-${{ env.RELEASE_VERSION }}-sources.jar.asc "$MAVEN_DIR/"
+        cp jgraphlet-${{ env.RELEASE_VERSION }}-javadoc.jar.asc "$MAVEN_DIR/"
+        
+        # Generate required checksums (md5 and sha1) for each file
+        cd "$MAVEN_DIR"
+        for file in *.jar *.pom; do
+          md5sum "$file" | cut -d' ' -f1 > "$file.md5"
+          sha1sum "$file" | cut -d' ' -f1 > "$file.sha1"
+        done
+        cd ../../../../../
+        
+        # Create bundle with proper structure
+        zip -r ../jgraphlet-${{ env.RELEASE_VERSION }}-bundle.jar dev/
         cd ..
         
         # Upload bundle to Central Portal
