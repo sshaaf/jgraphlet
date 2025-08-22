@@ -6,6 +6,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
@@ -67,7 +68,7 @@ public class TaskPipeline implements AutoCloseable {
      * @throws IllegalArgumentException if a task with the same name has already been added
      */
     public TaskPipeline add(String taskName, Task<?, ?> task) {
-        logger.fine("ADDING: " + taskName);
+        logger.log(Level.FINE, "Adding task {0} to the pipeline.", taskName);
         if (tasks.containsKey(taskName)) {
             throw new IllegalArgumentException("Task '" + taskName + "' has already been added.");
         }
@@ -178,7 +179,7 @@ public class TaskPipeline implements AutoCloseable {
                     
                     // Use computeIfAbsent to atomically check cache and compute if needed
                     return futureCache.computeIfAbsent(cacheKey, k -> {
-                        logger.fine("EXEC: Executing '" + taskName + "' (cache miss).");
+                        logger.log(Level.FINE, "Executing task {0}, (cache miss).", taskName);
                         CompletableFuture<Object> taskResultFuture = currentTask.execute(input, context);
                         
                         // Populate the object cache when the future completes
@@ -188,7 +189,7 @@ public class TaskPipeline implements AutoCloseable {
                         });
                     });
                 } else {
-                    logger.fine("EXEC: Executing '" + taskName + "' (non-cacheable).");
+                    logger.log(Level.FINE, "Executing task {0}, (cache miss).", taskName);
                     return currentTask.execute(input, context);
                 }
 
