@@ -3,7 +3,6 @@ package dev.shaaf.jgraphlet;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Level;
@@ -73,7 +72,7 @@ public class TaskPipeline implements AutoCloseable {
             throw new IllegalArgumentException("Task '" + taskName + "' has already been added.");
         }
         tasks.put(taskName, task);
-        graph.put(taskName, new CopyOnWriteArrayList<>());
+        graph.put(taskName, new ArrayList<>());
         lastAddedTaskName = taskName;
         return this;
     }
@@ -92,7 +91,7 @@ public class TaskPipeline implements AutoCloseable {
             throw new IllegalArgumentException("Task '" + taskName + "' has already been added.");
         }
         tasks.put(taskName, task);
-        graph.put(taskName, new CopyOnWriteArrayList<>());
+        graph.put(taskName, new ArrayList<>());
         return this;
     }
 
