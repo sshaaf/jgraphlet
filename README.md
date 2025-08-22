@@ -40,22 +40,51 @@ import dev.shaaf.jgraphlet.TaskPipeline;
 Task<String, Integer> lengthTask = (input, context) ->
         CompletableFuture.supplyAsync(() -> input.length());
 
-        Task<Integer, String> formatTask = (length, context) ->
-                CompletableFuture.supplyAsync(() -> "Length: " + length);
+Task<Integer, String> formatTask = (length, context) ->
+        CompletableFuture.supplyAsync(() -> "Length: " + length);
 
-        // Chain them together
-        TaskPipeline pipeline = new TaskPipeline()
-                .add("length", lengthTask)
-                .then("format", formatTask);
+// Chain them together with automatic resource cleanup
+try (TaskPipeline pipeline = new TaskPipeline()) {
+    pipeline.add("length", lengthTask)
+            .then("format", formatTask);
 
-        // Execute and get results!
-        String result = (String) pipeline.run("Hello World!").join();
-System.out.
-
-        println(result); // "Length: 12"
+    // Execute and get results!
+    String result = (String) pipeline.run("Hello World!").join();
+    System.out.println(result); // "Length: 12"
+} // Executor automatically cleaned up!
 ```
 
-**That's it!** You just built your first async pipeline! 🎉
+**That's it!** You just built your first async pipeline with automatic resource management! 🎉
+
+## 🔧 Resource Management
+
+JGraphlet implements `AutoCloseable` for automatic resource cleanup. This prevents memory leaks and ensures proper executor shutdown.
+
+### ✅ **Recommended Pattern (AutoCloseable)**
+```java
+// ✅ BEST: Automatic cleanup with try-with-resources
+try (TaskPipeline pipeline = new TaskPipeline()) {
+    pipeline.add("task1", myTask)
+            .then("task2", myOtherTask);
+    return pipeline.run(input).join();
+} // Executor automatically shut down
+```
+
+### ⚠️ **Manual Pattern (Advanced Users Only)**
+```java
+// ⚠️ MANUAL: Only if you need custom lifecycle control
+TaskPipeline pipeline = new TaskPipeline();
+try {
+    pipeline.add("task1", myTask);
+    return pipeline.run(input).join();
+} finally {
+    pipeline.shutdown(); // Must remember to call this!
+}
+```
+
+### 🎯 **When to Use Each Pattern**
+- **Try-with-resources**: Web endpoints, batch jobs, Spring services (99% of cases)
+- **Manual cleanup**: Long-lived pipelines, custom lifecycle management, testing
 
 ## 📚 Core Concepts & Examples
 
@@ -110,27 +139,33 @@ Understanding these methods is key to pipeline mastery!
 Use `add()` when you want to create a linear sequence and prepare for `then()`:
 
 ```java
-TaskPipeline pipeline = new TaskPipeline()
-    .add("validate", validationTask)      // Sets up the chain
-    .then("process", processingTask)      // Links to validate
-    .then("format", formattingTask);      // Links to process
+try (TaskPipeline pipeline = new TaskPipeline()) {
+    pipeline.add("validate", validationTask)      // Sets up the chain
+            .then("process", processingTask)       // Links to validate
+            .then("format", formattingTask);       // Links to process
+    
+    Object result = pipeline.run(input).join();
+}
 ```
 
 #### 🏗️ `addTask()` - Add Independent Nodes
 Use `addTask()` when building complex graphs with custom connections:
 
 ```java
-TaskPipeline pipeline = new TaskPipeline()
-    .addTask("input", inputTask)
-    .addTask("taskA", taskA)
-    .addTask("taskB", taskB)
-    .addTask("merger", mergerTask);
+try (TaskPipeline pipeline = new TaskPipeline()) {
+    pipeline.addTask("input", inputTask)
+            .addTask("taskA", taskA)
+            .addTask("taskB", taskB)
+            .addTask("merger", mergerTask);
 
-// Now create custom connections
-pipeline.connect("input", "taskA")
-        .connect("input", "taskB")
-        .connect("taskA", "merger")
-        .connect("taskB", "merger");
+    // Now create custom connections
+    pipeline.connect("input", "taskA")
+            .connect("input", "taskB")
+            .connect("taskA", "merger")
+            .connect("taskB", "merger");
+
+    Object result = pipeline.run(input).join();
+}
 ```
 
 #### ⛓️ `then()` - Linear Sequencing
@@ -138,10 +173,13 @@ Use `then()` after `add()` to create simple sequential chains:
 
 ```java
 // This creates: fetch → transform → save
-TaskPipeline pipeline = new TaskPipeline()
-    .add("fetch", fetchDataTask)
-    .then("transform", transformTask)
-    .then("save", saveTask);
+try (TaskPipeline pipeline = new TaskPipeline()) {
+    pipeline.add("fetch", fetchDataTask)
+            .then("transform", transformTask)
+            .then("save", saveTask);
+    
+    Object result = pipeline.run(input).join();
+}
 ```
 
 ### 🌊 Fan-In Pipelines (Multiple Tasks → One Task)
@@ -164,18 +202,20 @@ Task<Map<String, Object>, String> combineTask = (inputs, context) ->
         return user + " | " + prefs;
     });
 
-// Build the fan-in pipeline
-TaskPipeline pipeline = new TaskPipeline()
-    .addTask("fetchUser", fetchUserTask)
-    .addTask("fetchPrefs", fetchPrefsTask)
-    .addTask("combine", combineTask);
+// Build the fan-in pipeline with automatic cleanup
+try (TaskPipeline pipeline = new TaskPipeline()) {
+    pipeline.addTask("fetchUser", fetchUserTask)
+            .addTask("fetchPrefs", fetchPrefsTask)
+            .addTask("combine", combineTask);
 
-// Connect the fan-in
-pipeline.connect("fetchUser", "combine")
-        .connect("fetchPrefs", "combine");
+    // Connect the fan-in
+    pipeline.connect("fetchUser", "combine")
+            .connect("fetchPrefs", "combine");
 
-// Execute - both fetch tasks run in parallel!
-String result = (String) pipeline.run("user123").join();
+    // Execute - both fetch tasks run in parallel!
+    String result = (String) pipeline.run("user123").join();
+    System.out.println(result);
+}
 ```
 
 ### 🗂️ Using PipelineContext - Share Data Between Tasks
@@ -200,11 +240,13 @@ Task<String, String> personalizeTask = (input, context) ->
         return "Welcome " + role + " " + userId + "!";
     });
 
-TaskPipeline pipeline = new TaskPipeline()
-    .add("auth", authTask)
-    .then("personalize", personalizeTask);
+try (TaskPipeline pipeline = new TaskPipeline()) {
+    pipeline.add("auth", authTask)
+            .then("personalize", personalizeTask);
 
-String welcome = (String) pipeline.run("jwt-token-here").join();
+    String welcome = (String) pipeline.run("jwt-token-here").join();
+    System.out.println(welcome);
+}
 ```
 
 ## 🏆 Advanced Examples
@@ -213,38 +255,40 @@ String welcome = (String) pipeline.run("jwt-token-here").join();
 
 ```java
 // Real-world example: User registration workflow
-TaskPipeline userRegistration = new TaskPipeline()
-    .add("validate", new SyncTask<UserData, UserData>() {
-        public UserData executeSync(UserData user, PipelineContext context) {
-            if (user.email() == null) throw new TaskRunException("Email required");
-            context.put("validatedAt", System.currentTimeMillis());
-            return user;
-        }
-    })
-    .then("checkDuplicate", (userData, context) -> 
-        CompletableFuture.supplyAsync(() -> {
-            // Database check simulation
-            boolean exists = checkUserExists(userData.email());
-            if (exists) throw new TaskRunException("User already exists");
-            return userData;
-        }))
-    .then("hashPassword", (userData, context) -> 
-        CompletableFuture.supplyAsync(() -> {
-            String hashed = hashPassword(userData.password());
-            context.put("hashedPassword", hashed);
-            return userData.withHashedPassword(hashed);
-        }))
-    .then("saveUser", (userData, context) -> 
-        CompletableFuture.supplyAsync(() -> {
-            return saveToDatabase(userData);
-        }));
+try (TaskPipeline userRegistration = new TaskPipeline()) {
+    userRegistration
+        .add("validate", new SyncTask<UserData, UserData>() {
+            public UserData executeSync(UserData user, PipelineContext context) {
+                if (user.email() == null) throw new TaskRunException("Email required");
+                context.put("validatedAt", System.currentTimeMillis());
+                return user;
+            }
+        })
+        .then("checkDuplicate", (userData, context) -> 
+            CompletableFuture.supplyAsync(() -> {
+                // Database check simulation
+                boolean exists = checkUserExists(userData.email());
+                if (exists) throw new TaskRunException("User already exists");
+                return userData;
+            }))
+        .then("hashPassword", (userData, context) -> 
+            CompletableFuture.supplyAsync(() -> {
+                String hashed = hashPassword(userData.password());
+                context.put("hashedPassword", hashed);
+                return userData.withHashedPassword(hashed);
+            }))
+        .then("saveUser", (userData, context) -> 
+            CompletableFuture.supplyAsync(() -> {
+                return saveToDatabase(userData);
+            }));
 
-// Handle the registration
-try {
-    User newUser = (User) userRegistration.run(userData).join();
-    System.out.println("User registered: " + newUser.id());
-} catch (Exception e) {
-    System.err.println("Registration failed: " + e.getMessage());
+    // Handle the registration
+    try {
+        User newUser = (User) userRegistration.run(userData).join();
+        System.out.println("User registered: " + newUser.id());
+    } catch (Exception e) {
+        System.err.println("Registration failed: " + e.getMessage());
+    }
 }
 ```
 
@@ -267,14 +311,17 @@ Task<String, String> expensiveApiCall = new Task<String, String>() {
     }
 };
 
-TaskPipeline pipeline = new TaskPipeline()
-    .add("expensiveTask", expensiveApiCall);
+try (TaskPipeline pipeline = new TaskPipeline()) {
+    pipeline.add("expensiveTask", expensiveApiCall);
 
-// First call: takes 1 second
-String result1 = (String) pipeline.run("same-input").join();
+    // First call: takes 1 second
+    String result1 = (String) pipeline.run("same-input").join();
 
-// Second call: instant! (cached)
-String result2 = (String) pipeline.run("same-input").join();
+    // Second call: instant! (cached)
+    String result2 = (String) pipeline.run("same-input").join();
+    
+    System.out.println("Both results: " + result1 + " == " + result2);
+}
 ```
 
 ### 🌟 Fan-Out + Fan-In Pattern
@@ -295,16 +342,20 @@ Task<Map<String, Object>, String> finalMerger = (inputs, ctx) ->
                            length, hash, hasAt);
     });
 
-TaskPipeline fanOutIn = new TaskPipeline()
-    .addTask("pathA", pathA)
-    .addTask("pathB", pathB)
-    .addTask("pathC", pathC)
-    .addTask("merger", finalMerger);
+try (TaskPipeline fanOutIn = new TaskPipeline()) {
+    fanOutIn.addTask("pathA", pathA)
+            .addTask("pathB", pathB)
+            .addTask("pathC", pathC)
+            .addTask("merger", finalMerger);
 
-// All paths process the same input in parallel
-fanOutIn.connect("pathA", "merger")
-        .connect("pathB", "merger")
-        .connect("pathC", "merger");
+    // All paths process the same input in parallel
+    fanOutIn.connect("pathA", "merger")
+            .connect("pathB", "merger")
+            .connect("pathC", "merger");
+
+    String result = (String) fanOutIn.run("example@domain.com").join();
+    System.out.println(result);
+}
 ```
 
 ## 🛠️ Building & Integration

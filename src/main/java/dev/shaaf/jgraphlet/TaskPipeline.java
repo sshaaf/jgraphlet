@@ -12,8 +12,20 @@ import java.util.stream.Collectors;
 /**
  * Aysnc task pipeline that can be used to execute a chain of tasks in a defined order.
  * It supports parallel execution of independent tasks, caching, and complex dependencies.
+ * 
+ * <p>This class implements {@link AutoCloseable} to support try-with-resources for 
+ * automatic cleanup of internal executor resources.</p>
+ * 
+ * <p>Example usage:</p>
+ * <pre>{@code
+ * try (TaskPipeline pipeline = new TaskPipeline()) {
+ *     pipeline.add("task1", myTask)
+ *             .then("task2", myOtherTask);
+ *     String result = (String) pipeline.run("input").join();
+ * } // Executor automatically cleaned up
+ * }</pre>
  */
-public class TaskPipeline {
+public class TaskPipeline implements AutoCloseable {
 
     private static final Logger logger = Logger.getLogger(TaskPipeline.class.getName());
 
@@ -22,15 +34,18 @@ public class TaskPipeline {
     private final Map<CacheKey, Object> cache = new ConcurrentHashMap<>();
     private final Map<CacheKey, CompletableFuture<Object>> futureCache = new ConcurrentHashMap<>();
     private final ExecutorService executor;
+    private final boolean ownedExecutor;
 
-    private String lastAddedTaskName;
+    private volatile String lastAddedTaskName;
 
     public TaskPipeline() {
         this.executor = Executors.newWorkStealingPool();
+        this.ownedExecutor = true;
     }
 
     public TaskPipeline(ExecutorService executor) {
         this.executor = executor;
+        this.ownedExecutor = false;
     }
 
     /**
@@ -245,5 +260,40 @@ public class TaskPipeline {
                         name -> name,
                         name -> results.get(name).join()
                 ));
+    }
+
+    /**
+     * Shuts down the internal executor if it was created by this TaskPipeline.
+     * Call this method when you're done with the pipeline to prevent resource leaks.
+     * 
+     * Note: If you provided a custom executor via constructor, you are responsible 
+     * for shutting it down yourself.
+     */
+    public void shutdown() {
+        if (ownedExecutor && !executor.isShutdown()) {
+            executor.shutdown();
+        }
+    }
+
+    /**
+     * Forcibly shuts down the internal executor if it was created by this TaskPipeline.
+     * This may interrupt running tasks.
+     */
+    public void shutdownNow() {
+        if (ownedExecutor && !executor.isShutdown()) {
+            executor.shutdownNow();
+        }
+    }
+
+    /**
+     * Closes the TaskPipeline by gracefully shutting down the internal executor
+     * if it was created by this instance. This method is called automatically
+     * when using try-with-resources.
+     * 
+     * <p>This is equivalent to calling {@link #shutdown()}.</p>
+     */
+    @Override
+    public void close() {
+        shutdown();
     }
 }
