@@ -2,6 +2,11 @@ package dev.shaaf.jgraphlet;
 
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * A convenience interface for tasks whose logic is synchronous.
+ * Implementations provide their logic in {@link #executeSync(Object, PipelineContext)} and the
+ * default {@link #execute(Object, PipelineContext)} implementation wraps it into a CompletableFuture.
+ */
 public interface SyncTask<I, O> extends Task<I, O> {
 
     /**
@@ -16,6 +21,15 @@ public interface SyncTask<I, O> extends Task<I, O> {
      */
     O executeSync(I input, PipelineContext context) throws TaskRunException;
 
+    /**
+     * Executes this task asynchronously by invoking {@link #executeSync(Object, PipelineContext)}
+     * on the calling thread and wrapping the result into a completed future. If the synchronous
+     * execution throws, the returned future will be completed exceptionally with a TaskRunException.
+     *
+     * @param input   the input to the task
+     * @param context the shared pipeline context
+     * @return a future completing with the task result or exceptionally
+     */
     @Override
     default CompletableFuture<O> execute(I input, PipelineContext context) {
         try {

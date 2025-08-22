@@ -10,7 +10,7 @@ import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 /**
- * Aysnc task pipeline that can be used to execute a chain of tasks in a defined order.
+ * Async task pipeline that can be used to execute a chain of tasks in a defined order.
  * It supports parallel execution of independent tasks, caching, and complex dependencies.
  * 
  * <p>This class implements {@link AutoCloseable} to support try-with-resources for 
@@ -38,21 +38,33 @@ public class TaskPipeline implements AutoCloseable {
 
     private volatile String lastAddedTaskName;
 
+    /**
+     * Creates a TaskPipeline with an internally managed work-stealing executor.
+     * Close the pipeline or call shutdown() when finished to release resources.
+     */
     public TaskPipeline() {
         this.executor = Executors.newWorkStealingPool();
         this.ownedExecutor = true;
     }
 
+    /**
+     * Creates a TaskPipeline that uses the provided executor.
+     * The caller remains responsible for shutting the executor down.
+     *
+     * @param executor the executor service to run tasks on
+     */
     public TaskPipeline(ExecutorService executor) {
         this.executor = executor;
         this.ownedExecutor = false;
     }
 
     /**
-     * Adds a task to the pipeline and makes it the end of a linear chain for the next `.then()` call.
+     * Adds a task to the pipeline and makes it the end of a linear chain for the next {@code then()} call.
      *
-     * @param task The task to add.
+     * @param taskName the unique name for the task node being added
+     * @param task     the task instance to add
      * @return The pipeline instance for fluent chaining.
+     * @throws IllegalArgumentException if a task with the same name has already been added
      */
     public TaskPipeline add(String taskName, Task<?, ?> task) {
         logger.fine("ADDING: " + taskName);
@@ -67,10 +79,12 @@ public class TaskPipeline implements AutoCloseable {
 
     /**
      * Adds a task as a node to the graph without creating a connection.
-     * Use this before creating connections with the `connect()` method.
+     * Use this before creating connections with the {@link #connect(String, String)} method.
      *
-     * @param task The task to add.
+     * @param taskName the unique name for the task node being added
+     * @param task     the task instance to add
      * @return The pipeline instance for fluent chaining.
+     * @throws IllegalArgumentException if a task with the same name has already been added
      */
     public TaskPipeline addTask(String taskName, Task<?, ?> task) {
         if (tasks.containsKey(taskName)) {
@@ -84,8 +98,10 @@ public class TaskPipeline implements AutoCloseable {
     /**
      * Creates a linear dependency between the previously added task and the next task.
      *
-     * @param nextTask The task to execute next.
+     * @param nextTaskName the name for the next task to be added and connected
+     * @param nextTask     the next task to execute
      * @return The pipeline instance for fluent chaining.
+     * @throws IllegalStateException if called before {@link #add(String, Task)}
      */
     public TaskPipeline then(String nextTaskName, Task<?, ?> nextTask) {
         if (lastAddedTaskName == null) {
@@ -101,9 +117,11 @@ public class TaskPipeline implements AutoCloseable {
     /**
      * Creates an explicit dependency between any two tasks already added to the pipeline.
      *
-     * @param fromTaskName The parent task.
-     * @param toTaskName   The child task that depends on the parent.
+     * @param fromTaskName the parent task name
+     * @param toTaskName   the child task name that depends on the parent
      * @return The pipeline instance for fluent chaining.
+     * @throws IllegalArgumentException if task names are null or identical
+     * @throws IllegalStateException if either task has not been added yet
      */
     public TaskPipeline connect(String fromTaskName, String toTaskName) {
 
@@ -230,6 +248,9 @@ public class TaskPipeline implements AutoCloseable {
 
     /**
      * Finds all direct parent tasks for a given task in the graph.
+     *
+     * @param taskName the task for which to find direct predecessors
+     * @return a list of task names that directly precede the given task
      */
     private List<String> findPredecessorsFor(String taskName) {
         List<String> predecessors = new ArrayList<>();
@@ -245,6 +266,11 @@ public class TaskPipeline implements AutoCloseable {
      * Gathers inputs from completed parent tasks.
      * If there is one parent, it returns the raw result from that parent.
      * If there are multiple parents, it returns a Map<String, Object> of parent results.
+     *
+     * @param predecessors the list of parent task names
+     * @param results      the map of task names to their futures
+     * @param initialInput the initial pipeline input to use when there are no parents
+     * @return the input object for the current task, either a single parent result, a map of results, or the initial input
      */
     private Object gatherInputsFromCompletedParents(List<String> predecessors, Map<String, CompletableFuture<Object>> results, Object initialInput) {
         if (predecessors.isEmpty()) {
