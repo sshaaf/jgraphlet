@@ -20,6 +20,8 @@ jobs:
       uses: actions/checkout@v4
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
+        ref: main
         
     - name: Set up JDK 17
       uses: actions/setup-java@v4
@@ -51,9 +53,10 @@ jobs:
         
     - name: Update version in pom.xml
       run: |
+        echo "Current branch: $(git branch --show-current)"
         mvn versions:set -DnewVersion=${{ env.RELEASE_VERSION }} -DgenerateBackupPoms=false
         git add pom.xml
-        git commit -m "Release version ${{ env.RELEASE_VERSION }}"
+        git commit -m "Release version ${{ env.RELEASE_VERSION }}" || echo "No changes to commit"
         
     - name: Run tests
       run: mvn clean test -B
@@ -67,13 +70,17 @@ jobs:
         
     - name: Create Git tag
       run: |
-        git tag -a "v${{ env.RELEASE_VERSION }}" -m "Release version ${{ env.RELEASE_VERSION }}"
-        git push origin "v${{ env.RELEASE_VERSION }}"
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          git tag -a "v${{ env.RELEASE_VERSION }}" -m "Release version ${{ env.RELEASE_VERSION }}"
+          git push origin "v${{ env.RELEASE_VERSION }}"
+        else
+          echo "Tag v${{ env.RELEASE_VERSION }} already exists from GitHub release"
+        fi
         
     - name: Prepare next development version
       run: |
         NEXT_VERSION=$(echo ${{ env.RELEASE_VERSION }} | awk -F. '{$NF = $NF + 1; print}' OFS=.)
         mvn versions:set -DnewVersion=${NEXT_VERSION}-SNAPSHOT -DgenerateBackupPoms=false
         git add pom.xml
-        git commit -m "Prepare next development version ${NEXT_VERSION}-SNAPSHOT"
-        git push origin main
+        git commit -m "Prepare next development version ${NEXT_VERSION}-SNAPSHOT" || echo "No changes to commit"
+        git push origin main || echo "Push failed, continuing..."
