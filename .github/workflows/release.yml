@@ -62,8 +62,23 @@ jobs:
     - name: Run tests
       run: mvn clean test -B
       
-    - name: Build and deploy to Maven Central
-      run: mvn clean deploy -P release -B
+    - name: Build artifacts for Central Portal
+      run: |
+        # Build and sign artifacts but don't deploy yet
+        mvn clean install -P release -B -Dgpg.skip=false
+        
+    - name: Upload to Central Portal
+      run: |
+        # Create bundle for Central Portal upload
+        cd target
+        jar -cvf ../jgraphlet-${{ env.RELEASE_VERSION }}-bundle.jar *.jar *.pom *.asc
+        cd ..
+        
+        # Upload bundle to Central Portal
+        curl -v \
+          -u "${{ secrets.OSSRH_USERNAME }}:${{ secrets.OSSRH_TOKEN }}" \
+          -F "bundle=@jgraphlet-${{ env.RELEASE_VERSION }}-bundle.jar" \
+          "https://central.sonatype.com/api/v1/publisher/upload"
       env:
         MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
         MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
