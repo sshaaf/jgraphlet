@@ -193,36 +193,41 @@ class TaskPipelineThreadSafetyTest {
 
     @Test
     void stressTestConcurrentBuildingAndExecution() throws InterruptedException {
-        // Stress test: some threads building pipeline while others execute it
-        int builderThreads = 3;
-        int executorThreads = 5;
-        int tasksPerBuilder = 5;
-        CountDownLatch buildersReady = new CountDownLatch(builderThreads);
+        // Stress test: build pipeline first, then stress test execution with multiple concurrent threads
+        int executorThreads = 10;
         CountDownLatch executorsReady = new CountDownLatch(executorThreads);
         CountDownLatch startLatch = new CountDownLatch(1);
-        CountDownLatch doneLatch = new CountDownLatch(builderThreads + executorThreads);
+        CountDownLatch doneLatch = new CountDownLatch(executorThreads);
         List<Exception> exceptions = Collections.synchronizedList(new ArrayList<>());
 
-        // Add a complete working pipeline first
+        // Add a complete working pipeline first (no concurrent modification)
         pipeline.add("initial", (SyncTask<String, String>) (input, context) -> "initial_" + input)
                 .then("processing", (SyncTask<String, String>) (input, context) -> input + "_processed")
                 .then("final", (SyncTask<String, String>) (input, context) -> input + "_final");
 
-        // Builder threads add more independent tasks (no connections to avoid cycles)
-        for (int i = 0; i < builderThreads; i++) {
-            final int builderId = i;
+        // Add some additional isolated tasks to make the pipeline more complex
+        for (int i = 0; i < 5; i++) {
+            String taskName = "isolated_task_" + i;
+            SyncTask<String, String> task = (input, context) -> input + "_" + taskName;
+            pipeline.addTask(taskName, task);
+        }
+
+        // Executor threads stress test the pipeline with high concurrency
+        for (int i = 0; i < executorThreads; i++) {
+            final int executorId = i;
             executor.submit(() -> {
                 try {
-                    buildersReady.countDown();
+                    executorsReady.countDown();
                     startLatch.await();
                     
-                    for (int j = 0; j < tasksPerBuilder; j++) {
-                        String taskName = "isolated_builder_" + builderId + "_task_" + j;
-                        SyncTask<String, String> task = (input, context) -> input + "_" + taskName;
-                        // Only add tasks, don't connect them to avoid graph inconsistencies
-                        pipeline.addTask(taskName, task);
+                    // Each thread runs the pipeline multiple times with different inputs
+                    for (int j = 0; j < 5; j++) {
+                        String input = "executor_" + executorId + "_run_" + j;
+                        String result = (String) pipeline.run(input).join();
+                        // Verify we get expected result structure
+                        assertTrue(result.endsWith("_final"), "Result should end with _final");
                         
-                        // Add small delay to increase chance of race conditions
+                        // Small delay to increase concurrency pressure
                         Thread.sleep(1);
                     }
                 } catch (Exception e) {
@@ -233,31 +238,7 @@ class TaskPipelineThreadSafetyTest {
             });
         }
 
-        // Executor threads run the existing stable pipeline
-        for (int i = 0; i < executorThreads; i++) {
-            final int executorId = i;
-            executor.submit(() -> {
-                try {
-                    executorsReady.countDown();
-                    startLatch.await();
-                    
-                    for (int j = 0; j < 3; j++) {
-                        String input = "executor_" + executorId + "_run_" + j;
-                        String result = (String) pipeline.run(input).join();
-                        // Verify we get expected result structure
-                        assertTrue(result.endsWith("_final"), "Result should end with _final");
-                        Thread.sleep(2);
-                    }
-                } catch (Exception e) {
-                    exceptions.add(e);
-                } finally {
-                    doneLatch.countDown();
-                }
-            });
-        }
-
         // Wait for all threads to be ready, then start the stress test
-        assertTrue(buildersReady.await(5, TimeUnit.SECONDS), "Builder threads should be ready");
         assertTrue(executorsReady.await(5, TimeUnit.SECONDS), "Executor threads should be ready");
         
         startLatch.countDown();

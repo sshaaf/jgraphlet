@@ -20,6 +20,7 @@ public class TaskPipeline {
     private final Map<String, Task<?, ?>> tasks = new ConcurrentHashMap<>();
     private final Map<String, List<String>> graph = new ConcurrentHashMap<>();
     private final Map<CacheKey, Object> cache = new ConcurrentHashMap<>();
+    private final Map<CacheKey, CompletableFuture<Object>> futureCache = new ConcurrentHashMap<>();
     private final ExecutorService executor;
 
     private String lastAddedTaskName;
@@ -135,29 +136,28 @@ public class TaskPipeline {
 
             CompletableFuture<Object> currentFuture = allParentsDone.thenComposeAsync(v -> {
                 Object input = gatherInputsFromCompletedParents(predecessors, results, initialInput);
-                if (currentTask != null) {
-                    if (currentTask.isCacheable()) {
-                        CacheKey cacheKey = new CacheKey(taskName, input);
-                        if (cache.containsKey(cacheKey)) {
-                            logger.fine("HIT: Found '" + taskName + "' in cache.");
-                            return CompletableFuture.completedFuture(cache.get(cacheKey));
-                        }
-                    }
-                } else {
+                if (currentTask == null) {
                     throw new TaskRunException("Task '" + taskName + "' was not found in the pipeline.");
                 }
 
-                logger.fine("EXEC: Executing '" + taskName + "'.");
-                CompletableFuture<Object> taskResultFuture = currentTask.execute(input, context);
-
                 if (currentTask.isCacheable()) {
-                    return taskResultFuture.thenApply(result -> {
-                        CacheKey cacheKey = new CacheKey(taskName, input);
-                        cache.put(cacheKey, result);
-                        return result;
+                    CacheKey cacheKey = new CacheKey(taskName, input);
+                    
+                    // Use computeIfAbsent to atomically check cache and compute if needed
+                    return futureCache.computeIfAbsent(cacheKey, k -> {
+                        logger.fine("EXEC: Executing '" + taskName + "' (cache miss).");
+                        CompletableFuture<Object> taskResultFuture = currentTask.execute(input, context);
+                        
+                        // Populate the object cache when the future completes
+                        return taskResultFuture.thenApply(result -> {
+                            cache.put(cacheKey, result);
+                            return result;
+                        });
                     });
+                } else {
+                    logger.fine("EXEC: Executing '" + taskName + "' (non-cacheable).");
+                    return currentTask.execute(input, context);
                 }
-                return taskResultFuture;
 
             }, executor);
 
