@@ -33,93 +33,6 @@ class TaskPipelineTest {
 
     // --- Stub Task Implementations for Testing ---
 
-    static class StringToLengthTask implements Task<String, Integer> {
-        @Override
-        public CompletableFuture<Integer> execute(String input, PipelineContext context) {
-            return CompletableFuture.supplyAsync(() -> input.length());
-        }
-    }
-
-    static class LLMKindOfTask implements Task<Integer, Integer> {
-        private final int durationMs = 600;
-
-        @Override
-        public CompletableFuture<Integer> execute(Integer input, PipelineContext context) {
-            return CompletableFuture.supplyAsync(() -> {
-                try { Thread.sleep(durationMs); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-                return input * 2;
-            });
-        }
-    }
-
-    static class SlowTask implements Task<Integer, Integer> {
-        private final int durationMs;
-        public SlowTask(int durationMs) { this.durationMs = durationMs; }
-        @Override
-        public CompletableFuture<Integer> execute(Integer input, PipelineContext context) {
-            return CompletableFuture.supplyAsync(() -> {
-                try { Thread.sleep(durationMs); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-                return input * 2;
-            });
-        }
-    }
-    
-    static class MultiInputTask implements Task<Map<String, Object>, String> {
-        @Override
-        public CompletableFuture<String> execute(Map<String, Object> input, PipelineContext context) {
-            return CompletableFuture.supplyAsync(() -> {
-                // Combines results from two known parent tasks
-                Integer length = (Integer) input.get("StringToLengthTask");
-                Integer doubled = (Integer) input.get("SlowTask");
-                return length + ":" + doubled;
-            });
-        }
-    }
-
-    static class FailingTask implements Task<Object, Object> {
-        @Override
-        public CompletableFuture<Object> execute(Object input, PipelineContext context) {
-            return CompletableFuture.failedFuture(new TaskRunException("This task was designed to fail."));
-        }
-    }
-
-    // SyncTask-based helpers
-    static class UpperCaseSyncTask implements SyncTask<String, String> {
-        @Override
-        public String executeSync(String input, PipelineContext context) {
-            return input.toUpperCase();
-        }
-    }
-
-    static class SuffixSyncTask implements SyncTask<String, String> {
-        private final String suffix;
-        SuffixSyncTask(String suffix) { this.suffix = suffix; }
-        @Override
-        public String executeSync(String input, PipelineContext context) {
-            return input + suffix;
-        }
-    }
-
-    static class ExplodingSyncTask implements SyncTask<String, String> {
-        @Override
-        public String executeSync(String input, PipelineContext context) {
-            throw new IllegalStateException("boom");
-        }
-    }
-
-    static class CacheableSyncTask implements SyncTask<String, Integer> {
-        private final AtomicInteger calls = new AtomicInteger();
-        @Override
-        public Integer executeSync(String input, PipelineContext context) {
-            return calls.incrementAndGet();
-        }
-        @Override
-        public boolean isCacheable() { return true; }
-        int callCount() { return calls.get(); }
-    }
-
-    // --- The Actual Test Cases ---
-
     @Test
     void shouldExecuteSimpleLinearChain() {
         // Arrange
@@ -188,7 +101,7 @@ class TaskPipelineTest {
         var taskA = new StringToLengthTask();
         var taskB = new SlowTask(500);
         var taskC = new LLMKindOfTask();
-        pipeline.addTask("taskA",taskA).addTask("taskB",taskB).addTask("taskC", taskC);
+        pipeline.addTask("taskA", taskA).addTask("taskB", taskB).addTask("taskC", taskC);
         pipeline.connect("taskA", "taskB");
         pipeline.connect("taskA", "taskC");
 
@@ -196,7 +109,9 @@ class TaskPipelineTest {
         long startTime = System.currentTimeMillis();
         // We can't get a final result because B and C are leaf nodes, so we create a dummy joiner task
         var joiner = new Task<Map<String, Object>, Integer>() {
-            public CompletableFuture<Integer> execute(Map<String, Object> i, PipelineContext c) { return CompletableFuture.completedFuture(1); }
+            public CompletableFuture<Integer> execute(Map<String, Object> i, PipelineContext c) {
+                return CompletableFuture.completedFuture(1);
+            }
         };
         pipeline.addTask("joiner", joiner);
         pipeline.connect("taskB", "joiner");
@@ -220,15 +135,15 @@ class TaskPipelineTest {
         var taskB = new SlowTask(10);
         var taskC = new MultiInputTask();
 
-        pipeline.addTask("taskA",taskA).addTask("taskB",taskB).addTask("taskC",taskC);
+        pipeline.addTask("taskA", taskA).addTask("taskB", taskB).addTask("taskC", taskC);
         pipeline.connect("taskA", "taskC");
         pipeline.connect("taskB", "taskC");
 
         // Act
         // This is tricky because taskA and taskB have different input types.
         // We'll use a wrapper to provide a common input type for the pipeline's start.
-        var initialTask = new Task<String, Map<String,Object>>() {
-            public CompletableFuture<Map<String,Object>> execute(String i, PipelineContext c) {
+        var initialTask = new Task<String, Map<String, Object>>() {
+            public CompletableFuture<Map<String, Object>> execute(String i, PipelineContext c) {
                 return CompletableFuture.completedFuture(Map.of("string", "hello", "integer", 50));
             }
         };
@@ -236,20 +151,32 @@ class TaskPipelineTest {
         // A simpler approach for this test would be to have tasks A and B take the same input type.
         // For now, let's assume a simplified graph where inputs match.
         // We'll test the gatherInputsFromCompletedParents logic.
-        
+
         // Let's create a simpler graph for a clean test:
         pipeline = new TaskPipeline(executor); // Reset pipeline
-        var startA = new Task<String, String>() { public CompletableFuture<String> execute(String i, PipelineContext c) { return CompletableFuture.completedFuture("hello"); }};
-        var startB = new Task<String, Integer>() { public CompletableFuture<Integer> execute(String i, PipelineContext c) { return CompletableFuture.completedFuture(100); }};
-        var joinerTask = new Task<Map<String, Object>, String>() { public CompletableFuture<String> execute(Map<String, Object> i, PipelineContext c) { return CompletableFuture.completedFuture(i.get("startA") + ":" + i.get("startB")); }};
+        var startA = new Task<String, String>() {
+            public CompletableFuture<String> execute(String i, PipelineContext c) {
+                return CompletableFuture.completedFuture("hello");
+            }
+        };
+        var startB = new Task<String, Integer>() {
+            public CompletableFuture<Integer> execute(String i, PipelineContext c) {
+                return CompletableFuture.completedFuture(100);
+            }
+        };
+        var joinerTask = new Task<Map<String, Object>, String>() {
+            public CompletableFuture<String> execute(Map<String, Object> i, PipelineContext c) {
+                return CompletableFuture.completedFuture(i.get("startA") + ":" + i.get("startB"));
+            }
+        };
 
-        pipeline.addTask("startA",startA).addTask("startB", startB).addTask("joinerTask",joinerTask);
+        pipeline.addTask("startA", startA).addTask("startB", startB).addTask("joinerTask", joinerTask);
         pipeline.connect("startA", "joinerTask");
         pipeline.connect("startB", "joinerTask");
 
         // Act
         Object finalResult = pipeline.run("dummy").join();
-        
+
         // Assert
         assertEquals("hello:100", finalResult);
     }
@@ -260,7 +187,7 @@ class TaskPipelineTest {
         var taskA = new StringToLengthTask();
         var taskB = new FailingTask();
         var taskC = new SlowTask(10);
-        pipeline.add("taskA", taskA).then("taskB",taskB).then("taskC",taskC);
+        pipeline.add("taskA", taskA).then("taskB", taskB).then("taskC", taskC);
 
         // Act
         CompletableFuture<Object> future = pipeline.run("test");
@@ -268,15 +195,15 @@ class TaskPipelineTest {
         // Assert
         // Use assertThrows to catch the expected top-level exception
         CompletionException thrown = assertThrows(
-            CompletionException.class,
-            future::join, // Method reference to the code that should throw
-            "Expected pipeline.run().join() to throw CompletionException, but it didn't."
+                CompletionException.class,
+                future::join, // Method reference to the code that should throw
+                "Expected pipeline.run().join() to throw CompletionException, but it didn't."
         );
 
         // Assert on the cause of the exception
         Throwable cause = thrown.getCause();
         assertNotNull(cause, "The CompletionException should have a cause.");
-        assertTrue(cause instanceof TaskRunException, "The cause should be a TaskRunException.");
+        assertInstanceOf(TaskRunException.class, cause, "The cause should be a TaskRunException.");
         assertEquals("This task was designed to fail.", cause.getMessage());
     }
 
@@ -305,8 +232,10 @@ class TaskPipelineTest {
 
         // Assert
         CompletionException thrown = assertThrows(CompletionException.class, f::join);
-        assertTrue(thrown.getCause() instanceof TaskRunException);
+        assertInstanceOf(TaskRunException.class, thrown.getCause());
     }
+
+    // --- The Actual Test Cases ---
 
     @Test
     void shouldReturnInitialInputWhenNoTasks() {
@@ -323,16 +252,26 @@ class TaskPipelineTest {
     void shouldSupportFanOutAndJoinWithSyncTasks() {
         // Arrange: start -> double, start -> triple, then join sum
         var start = new UpperCaseSyncTask() {
-            @Override public String executeSync(String input, PipelineContext context) { return "3"; }
+            @Override
+            public String executeSync(String input, PipelineContext context) {
+                return "3";
+            }
         };
         var doubleTask = new SyncTask<String, Integer>() {
-            @Override public Integer executeSync(String input, PipelineContext context) { return Integer.parseInt(input) * 2; }
+            @Override
+            public Integer executeSync(String input, PipelineContext context) {
+                return Integer.parseInt(input) * 2;
+            }
         };
         var tripleTask = new SyncTask<String, Integer>() {
-            @Override public Integer executeSync(String input, PipelineContext context) { return Integer.parseInt(input) * 3; }
+            @Override
+            public Integer executeSync(String input, PipelineContext context) {
+                return Integer.parseInt(input) * 3;
+            }
         };
         var joiner = new Task<Map<String, Object>, Integer>() {
-            @Override public CompletableFuture<Integer> execute(Map<String, Object> input, PipelineContext context) {
+            @Override
+            public CompletableFuture<Integer> execute(Map<String, Object> input, PipelineContext context) {
                 int a = (Integer) input.get("double");
                 int b = (Integer) input.get("triple");
                 return CompletableFuture.completedFuture(a + b);
@@ -424,4 +363,144 @@ class TaskPipelineTest {
         IllegalStateException ex2 = assertThrows(IllegalStateException.class, () -> pipeline.connect("a", "missing"));
         assertTrue(ex2.getMessage().contains("must be added"));
     }
+
+    @Test
+    void examplesTest() {
+// Create tasks that run in parallel
+        SyncTask<String, String> fetchUserTask = (userId, context) ->
+                "User: " + userId;
+
+        SyncTask<String, String> fetchPrefsTask = (userId, context) ->
+                "Prefs: dark_mode=true";
+
+// Fan-in task that receives results from multiple parents
+        Task<Map<String, Object>, String> combineTask = (inputs, context) ->
+                CompletableFuture.supplyAsync(() -> {
+                    String user = (String) inputs.get("fetchUser");
+                    String prefs = (String) inputs.get("fetchPrefs");
+                    return user + " | " + prefs;
+                });
+
+// Build the fan-in pipeline
+        TaskPipeline pipeline = new TaskPipeline()
+                .addTask("fetchUser", fetchUserTask)
+                .addTask("fetchPrefs", fetchPrefsTask)
+                .addTask("combine", combineTask);
+
+// Connect the fan-in
+        pipeline.connect("fetchUser", "combine")
+                .connect("fetchPrefs", "combine");
+
+// Execute - both fetch tasks run in parallel!
+        String result = (String) pipeline.run("user123").join();
+    }
+
+    static class StringToLengthTask implements Task<String, Integer> {
+        @Override
+        public CompletableFuture<Integer> execute(String input, PipelineContext context) {
+            return CompletableFuture.supplyAsync(() -> input.length());
+        }
+    }
+
+    static class LLMKindOfTask implements Task<Integer, Integer> {
+        private final int durationMs = 600;
+
+        @Override
+        public CompletableFuture<Integer> execute(Integer input, PipelineContext context) {
+            return CompletableFuture.supplyAsync(() -> {
+                try {
+                    Thread.sleep(durationMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return input * 2;
+            });
+        }
+    }
+
+    static class SlowTask implements Task<Integer, Integer> {
+        private final int durationMs;
+
+        public SlowTask(int durationMs) {
+            this.durationMs = durationMs;
+        }
+
+        @Override
+        public CompletableFuture<Integer> execute(Integer input, PipelineContext context) {
+            return CompletableFuture.supplyAsync(() -> {
+                try {
+                    Thread.sleep(durationMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return input * 2;
+            });
+        }
+    }
+
+    static class MultiInputTask implements Task<Map<String, Object>, String> {
+        @Override
+        public CompletableFuture<String> execute(Map<String, Object> input, PipelineContext context) {
+            return CompletableFuture.supplyAsync(() -> {
+                // Combines results from two known parent tasks
+                Integer length = (Integer) input.get("StringToLengthTask");
+                Integer doubled = (Integer) input.get("SlowTask");
+                return length + ":" + doubled;
+            });
+        }
+    }
+
+    static class FailingTask implements Task<Object, Object> {
+        @Override
+        public CompletableFuture<Object> execute(Object input, PipelineContext context) {
+            return CompletableFuture.failedFuture(new TaskRunException("This task was designed to fail."));
+        }
+    }
+
+    // SyncTask-based helpers
+    static class UpperCaseSyncTask implements SyncTask<String, String> {
+        @Override
+        public String executeSync(String input, PipelineContext context) {
+            return input.toUpperCase();
+        }
+    }
+
+    static class SuffixSyncTask implements SyncTask<String, String> {
+        private final String suffix;
+
+        SuffixSyncTask(String suffix) {
+            this.suffix = suffix;
+        }
+
+        @Override
+        public String executeSync(String input, PipelineContext context) {
+            return input + suffix;
+        }
+    }
+
+    static class ExplodingSyncTask implements SyncTask<String, String> {
+        @Override
+        public String executeSync(String input, PipelineContext context) {
+            throw new IllegalStateException("boom");
+        }
+    }
+
+    static class CacheableSyncTask implements SyncTask<String, Integer> {
+        private final AtomicInteger calls = new AtomicInteger();
+
+        @Override
+        public Integer executeSync(String input, PipelineContext context) {
+            return calls.incrementAndGet();
+        }
+
+        @Override
+        public boolean isCacheable() {
+            return true;
+        }
+
+        int callCount() {
+            return calls.get();
+        }
+    }
+
 }
