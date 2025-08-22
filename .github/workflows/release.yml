@@ -73,9 +73,9 @@ jobs:
         
     - name: Upload to Central Portal
       run: |
-        # Create bundle for Central Portal upload with only required files
+        # Create bundle for Central Portal upload with only required files (using zip to avoid META-INF)
         cd target
-        jar -cvf ../jgraphlet-${{ env.RELEASE_VERSION }}-bundle.jar \
+        zip ../jgraphlet-${{ env.RELEASE_VERSION }}-bundle.jar \
           jgraphlet-${{ env.RELEASE_VERSION }}.jar \
           jgraphlet-${{ env.RELEASE_VERSION }}.pom \
           jgraphlet-${{ env.RELEASE_VERSION }}-sources.jar \
