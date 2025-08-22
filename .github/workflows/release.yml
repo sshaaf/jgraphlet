@@ -73,9 +73,17 @@ jobs:
         
     - name: Upload to Central Portal
       run: |
-        # Create bundle for Central Portal upload
+        # Create bundle for Central Portal upload with only required files
         cd target
-        jar -cvf ../jgraphlet-${{ env.RELEASE_VERSION }}-bundle.jar *.jar *.pom *.asc
+        jar -cvf ../jgraphlet-${{ env.RELEASE_VERSION }}-bundle.jar \
+          jgraphlet-${{ env.RELEASE_VERSION }}.jar \
+          jgraphlet-${{ env.RELEASE_VERSION }}.pom \
+          jgraphlet-${{ env.RELEASE_VERSION }}-sources.jar \
+          jgraphlet-${{ env.RELEASE_VERSION }}-javadoc.jar \
+          jgraphlet-${{ env.RELEASE_VERSION }}.jar.asc \
+          jgraphlet-${{ env.RELEASE_VERSION }}.pom.asc \
+          jgraphlet-${{ env.RELEASE_VERSION }}-sources.jar.asc \
+          jgraphlet-${{ env.RELEASE_VERSION }}-javadoc.jar.asc
         cd ..
         
         # Upload bundle to Central Portal
