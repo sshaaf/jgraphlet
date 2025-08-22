@@ -2,6 +2,8 @@ package dev.shaaf.jgraphlet;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Logger;
@@ -15,9 +17,9 @@ public class TaskPipeline {
 
     private static final Logger logger = Logger.getLogger(TaskPipeline.class.getName());
 
-    private final Map<String, Task<?, ?>> tasks = new LinkedHashMap<>();
-    private final Map<String, List<String>> graph = new HashMap<>();
-    private final Map<CacheKey, Object> cache = new HashMap<>();
+    private final Map<String, Task<?, ?>> tasks = new ConcurrentHashMap<>();
+    private final Map<String, List<String>> graph = new ConcurrentHashMap<>();
+    private final Map<CacheKey, Object> cache = new ConcurrentHashMap<>();
     private final ExecutorService executor;
 
     private String lastAddedTaskName;
@@ -42,7 +44,7 @@ public class TaskPipeline {
             throw new IllegalArgumentException("Task '" + taskName + "' has already been added.");
         }
         tasks.put(taskName, task);
-        graph.put(taskName, new ArrayList<>());
+        graph.put(taskName, new CopyOnWriteArrayList<>());
         lastAddedTaskName = taskName;
         return this;
     }
@@ -59,7 +61,7 @@ public class TaskPipeline {
             throw new IllegalArgumentException("Task '" + taskName + "' has already been added.");
         }
         tasks.put(taskName, task);
-        graph.put(taskName, new ArrayList<>());
+        graph.put(taskName, new CopyOnWriteArrayList<>());
         return this;
     }
 
