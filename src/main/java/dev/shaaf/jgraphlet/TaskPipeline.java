@@ -26,7 +26,7 @@ public class TaskPipeline {
     private String lastAddedTaskName;
 
     public TaskPipeline() {
-        this.executor = Executors.newCachedThreadPool();
+        this.executor = Executors.newWorkStealingPool();
     }
 
     public TaskPipeline(ExecutorService executor) {
