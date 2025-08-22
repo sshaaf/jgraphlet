@@ -367,9 +367,9 @@ Add to your `pom.xml`:
 
 ```xml
 <dependency>
-    <groupId>dev.jgraphlet</groupId>
+    <groupId>dev.shaaf.jgraphlet</groupId>
     <artifactId>jgraphlet</artifactId>
-    <version>0.1</version>
+    <version>0.1.0</version>
 </dependency>
 ```
 
