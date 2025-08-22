@@ -339,6 +339,10 @@ mvn install             # Install to local repository
 - **🧪 Test-Friendly**: Easy to unit test individual tasks and whole pipelines
 - **📖 Self-Documenting**: Your pipeline structure tells the story of your workflow
 
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
 ## 🚀 Get Started Today!
 
 Ready to supercharge your Java applications? JGraphlet makes complex async workflows simple and fun!

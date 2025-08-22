@@ -10,6 +10,18 @@
     <name>jgraphlet</name>
     <url>https://shaaf.dev/projects</url>
 
+    <scm>
+        <url>https://github.com:sshaaf/jgraphlet.git</url>
+    </scm>
+
+    <licenses>
+    <license>
+      <name>MIT License</name>
+      <url>https://opensource.org/licenses/MIT</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>17</maven.compiler.release>
