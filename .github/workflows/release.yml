@@ -66,6 +66,10 @@ jobs:
       run: |
         # Build and sign artifacts but don't deploy yet
         mvn clean install -P release -B -Dgpg.skip=false
+      env:
+        MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+        MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+        MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         
     - name: Upload to Central Portal
       run: |
