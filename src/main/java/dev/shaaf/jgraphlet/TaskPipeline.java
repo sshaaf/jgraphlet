@@ -5,6 +5,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
@@ -28,6 +29,8 @@ import java.util.stream.Collectors;
 public class TaskPipeline implements AutoCloseable {
 
     private static final Logger logger = Logger.getLogger(TaskPipeline.class.getName());
+    private static final long DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 30;
+    private static final long DEFAULT_SHUTDOWN_NOW_TIMEOUT_SECONDS = 10;
 
     private final Map<String, Task<?, ?>> tasks = new ConcurrentHashMap<>();
     private final Map<String, List<String>> graph = new ConcurrentHashMap<>();
@@ -35,6 +38,8 @@ public class TaskPipeline implements AutoCloseable {
     private final Map<CacheKey, CompletableFuture<Object>> futureCache = new ConcurrentHashMap<>();
     private final ExecutorService executor;
     private final boolean ownedExecutor;
+    private final long shutdownTimeoutSeconds;
+    private final long shutdownNowTimeoutSeconds;
 
     private volatile String lastAddedTaskName;
 
@@ -43,8 +48,7 @@ public class TaskPipeline implements AutoCloseable {
      * Close the pipeline or call shutdown() when finished to release resources.
      */
     public TaskPipeline() {
-        this.executor = Executors.newWorkStealingPool();
-        this.ownedExecutor = true;
+        this(Executors.newWorkStealingPool(), true, DEFAULT_SHUTDOWN_TIMEOUT_SECONDS, DEFAULT_SHUTDOWN_NOW_TIMEOUT_SECONDS);
     }
 
     /**
@@ -54,8 +58,28 @@ public class TaskPipeline implements AutoCloseable {
      * @param executor the executor service to run tasks on
      */
     public TaskPipeline(ExecutorService executor) {
+        this(executor, false, DEFAULT_SHUTDOWN_TIMEOUT_SECONDS, DEFAULT_SHUTDOWN_NOW_TIMEOUT_SECONDS);
+    }
+
+    /**
+     * Creates a TaskPipeline with custom shutdown timeout settings.
+     *
+     * @param shutdownTimeoutSeconds timeout in seconds for graceful shutdown
+     * @param shutdownNowTimeoutSeconds timeout in seconds for forced shutdown
+     */
+    public TaskPipeline(long shutdownTimeoutSeconds, long shutdownNowTimeoutSeconds) {
+        this(Executors.newWorkStealingPool(), true, shutdownTimeoutSeconds, shutdownNowTimeoutSeconds);
+    }
+
+    /**
+     * Private constructor for internal initialization.
+     */
+    private TaskPipeline(ExecutorService executor, boolean ownedExecutor, 
+                        long shutdownTimeoutSeconds, long shutdownNowTimeoutSeconds) {
         this.executor = executor;
-        this.ownedExecutor = false;
+        this.ownedExecutor = ownedExecutor;
+        this.shutdownTimeoutSeconds = shutdownTimeoutSeconds;
+        this.shutdownNowTimeoutSeconds = shutdownNowTimeoutSeconds;
     }
 
     /**
@@ -291,23 +315,57 @@ public class TaskPipeline implements AutoCloseable {
     /**
      * Shuts down the internal executor if it was created by this TaskPipeline.
      * Call this method when you're done with the pipeline to prevent resource leaks.
+     * This method will wait for currently executing tasks to complete, up to the configured timeout.
      * 
      * Note: If you provided a custom executor via constructor, you are responsible 
      * for shutting it down yourself.
      */
     public void shutdown() {
         if (ownedExecutor && !executor.isShutdown()) {
+            logger.log(Level.FINE, "Initiating graceful shutdown of TaskPipeline executor");
             executor.shutdown();
+            try {
+                if (!executor.awaitTermination(shutdownTimeoutSeconds, TimeUnit.SECONDS)) {
+                    logger.log(Level.WARNING, 
+                        "Executor did not terminate within {0} seconds, forcing shutdown", 
+                        shutdownTimeoutSeconds);
+                    shutdownNow();
+                } else {
+                    logger.log(Level.FINE, "TaskPipeline executor shutdown completed successfully");
+                }
+            } catch (InterruptedException e) {
+                logger.log(Level.WARNING, "Shutdown interrupted, forcing immediate termination", e);
+                shutdownNow();
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
     /**
      * Forcibly shuts down the internal executor if it was created by this TaskPipeline.
-     * This may interrupt running tasks.
+     * This may interrupt running tasks. Waits for tasks to respond to interruption.
      */
     public void shutdownNow() {
         if (ownedExecutor && !executor.isShutdown()) {
-            executor.shutdownNow();
+            logger.log(Level.FINE, "Forcing immediate shutdown of TaskPipeline executor");
+            List<Runnable> pendingTasks = executor.shutdownNow();
+            if (!pendingTasks.isEmpty()) {
+                logger.log(Level.INFO, "Cancelled {0} pending tasks during forced shutdown", 
+                    pendingTasks.size());
+            }
+            try {
+                if (!executor.awaitTermination(shutdownNowTimeoutSeconds, TimeUnit.SECONDS)) {
+                    logger.log(Level.SEVERE, 
+                        "Executor did not terminate after shutdownNow within {0} seconds. " +
+                        "Some threads may still be running.", 
+                        shutdownNowTimeoutSeconds);
+                } else {
+                    logger.log(Level.FINE, "Forced shutdown completed");
+                }
+            } catch (InterruptedException e) {
+                logger.log(Level.SEVERE, "Forced shutdown interrupted", e);
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
