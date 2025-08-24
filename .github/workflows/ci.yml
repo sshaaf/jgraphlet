@@ -5,6 +5,7 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch: # Allow manual triggering for testing
 
 jobs:
   test:
@@ -88,23 +89,28 @@ jobs:
         
         # Check for TODO/FIXME comments
         echo "📝 Checking for TODO/FIXME comments..."
-        if find src/ -name "*.java" -exec grep -l "TODO\|FIXME" {} \; 2>/dev/null | head -5; then
+        TODO_FILES=$(find src/ -name "*.java" -exec grep -l "TODO\|FIXME" {} \; 2>/dev/null | head -5)
+        if [ -n "$TODO_FILES" ]; then
           echo "ℹ️  Found TODO/FIXME comments (consider addressing them)"
+          echo "$TODO_FILES"
         else
           echo "✅ No TODO/FIXME comments found"
         fi
         
         # Check for System.out.println in main code
         echo "🖨️  Checking for System.out.println usage..."
-        if find src/main/ -name "*.java" -exec grep -l "System\.out\.println" {} \; 2>/dev/null; then
+        PRINTLN_FILES=$(find src/main/ -name "*.java" -exec grep -l "System\.out\.println" {} \; 2>/dev/null)
+        if [ -n "$PRINTLN_FILES" ]; then
           echo "⚠️  Found System.out.println in main code - consider using proper logging"
+          echo "$PRINTLN_FILES"
         else
           echo "✅ No System.out.println found in main code"
         fi
         
         # Verify thread-safety tests run successfully
         echo "🧵 Verifying thread-safety tests..."
-        if mvn test -Dtest=TaskPipelineThreadSafetyTest -q; then
+        mvn test -Dtest=TaskPipelineThreadSafetyTest -q
+        if [ $? -eq 0 ]; then
           echo "✅ Thread-safety tests passed"
         else
           echo "❌ Thread-safety tests failed"
