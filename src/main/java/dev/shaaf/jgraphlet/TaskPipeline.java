@@ -34,6 +34,7 @@ public class TaskPipeline implements AutoCloseable {
 
     private final Map<String, Task<?, ?>> tasks = new ConcurrentHashMap<>();
     private final Map<String, List<String>> graph = new ConcurrentHashMap<>();
+    private final Map<String, List<String>> reverseGraph = new ConcurrentHashMap<>(); // For O(1) predecessor lookups
     private final Map<CacheKey, Object> cache = new ConcurrentHashMap<>();
     private final Map<CacheKey, CompletableFuture<Object>> futureCache = new ConcurrentHashMap<>();
     private final ExecutorService executor;
@@ -97,6 +98,7 @@ public class TaskPipeline implements AutoCloseable {
         }
         tasks.put(taskName, task);
         graph.put(taskName, new ArrayList<>());
+        reverseGraph.put(taskName, new ArrayList<>());
         lastAddedTaskName = taskName;
         return this;
     }
@@ -116,6 +118,7 @@ public class TaskPipeline implements AutoCloseable {
         }
         tasks.put(taskName, task);
         graph.put(taskName, new ArrayList<>());
+        reverseGraph.put(taskName, new ArrayList<>());
         return this;
     }
 
@@ -166,6 +169,7 @@ public class TaskPipeline implements AutoCloseable {
         }
 
         graph.get(fromTaskName).add(toTaskName);
+        reverseGraph.get(toTaskName).add(fromTaskName); // Maintain reverse adjacency for O(1) lookups
         return this;
     }
 
@@ -272,18 +276,14 @@ public class TaskPipeline implements AutoCloseable {
 
     /**
      * Finds all direct parent tasks for a given task in the graph.
+     * Now runs in O(1) time using the reverse adjacency map.
      *
      * @param taskName the task for which to find direct predecessors
      * @return a list of task names that directly precede the given task
      */
     private List<String> findPredecessorsFor(String taskName) {
-        List<String> predecessors = new ArrayList<>();
-        for (Map.Entry<String, List<String>> entry : graph.entrySet()) {
-            if (entry.getValue().contains(taskName)) {
-                predecessors.add(entry.getKey());
-            }
-        }
-        return predecessors;
+        // O(1) lookup using reverse graph instead of O(n*m) iteration
+        return reverseGraph.getOrDefault(taskName, List.of());
     }
 
     /**
