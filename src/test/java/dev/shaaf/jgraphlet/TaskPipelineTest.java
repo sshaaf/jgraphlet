@@ -86,7 +86,11 @@ class TaskPipelineTest {
         try {
             var field = TaskPipeline.class.getDeclaredField("lastAddedTaskName");
             field.setAccessible(true);
-            String lastAddedTaskName = (String) field.get(pipeline);
+            // Now lastAddedTaskName is an AtomicReference<String>
+            @SuppressWarnings("unchecked")
+            java.util.concurrent.atomic.AtomicReference<String> atomicRef = 
+                (java.util.concurrent.atomic.AtomicReference<String>) field.get(pipeline);
+            String lastAddedTaskName = atomicRef.get();
 
             // Assert
             assertEquals(taskName, lastAddedTaskName, "lastAddedTaskName should match the name of the last added task.");
