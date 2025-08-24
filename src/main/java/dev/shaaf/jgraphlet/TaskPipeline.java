@@ -1,11 +1,12 @@
 package dev.shaaf.jgraphlet;
 
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
@@ -13,10 +14,10 @@ import java.util.stream.Collectors;
 /**
  * Async task pipeline that can be used to execute a chain of tasks in a defined order.
  * It supports parallel execution of independent tasks, caching, and complex dependencies.
- * 
- * <p>This class implements {@link AutoCloseable} to support try-with-resources for 
+ *
+ * <p>This class implements {@link AutoCloseable} to support try-with-resources for
  * automatic cleanup of internal executor resources.</p>
- * 
+ *
  * <p>Example usage:</p>
  * <pre>{@code
  * try (TaskPipeline pipeline = new TaskPipeline()) {
@@ -42,7 +43,11 @@ public class TaskPipeline implements AutoCloseable {
     private final long shutdownTimeoutSeconds;
     private final long shutdownNowTimeoutSeconds;
 
-    private volatile String lastAddedTaskName;
+    private final AtomicReference<String> lastAddedTaskName = new AtomicReference<>();
+
+    private final ReadWriteLock pipelineLock = new ReentrantReadWriteLock();
+    private final Lock readLock = pipelineLock.readLock();
+    private final Lock writeLock = pipelineLock.writeLock();
 
     /**
      * Creates a TaskPipeline with an internally managed work-stealing executor.
@@ -65,7 +70,7 @@ public class TaskPipeline implements AutoCloseable {
     /**
      * Creates a TaskPipeline with custom shutdown timeout settings.
      *
-     * @param shutdownTimeoutSeconds timeout in seconds for graceful shutdown
+     * @param shutdownTimeoutSeconds    timeout in seconds for graceful shutdown
      * @param shutdownNowTimeoutSeconds timeout in seconds for forced shutdown
      */
     public TaskPipeline(long shutdownTimeoutSeconds, long shutdownNowTimeoutSeconds) {
@@ -75,8 +80,8 @@ public class TaskPipeline implements AutoCloseable {
     /**
      * Private constructor for internal initialization.
      */
-    private TaskPipeline(ExecutorService executor, boolean ownedExecutor, 
-                        long shutdownTimeoutSeconds, long shutdownNowTimeoutSeconds) {
+    private TaskPipeline(ExecutorService executor, boolean ownedExecutor,
+                         long shutdownTimeoutSeconds, long shutdownNowTimeoutSeconds) {
         this.executor = executor;
         this.ownedExecutor = ownedExecutor;
         this.shutdownTimeoutSeconds = shutdownTimeoutSeconds;
@@ -92,15 +97,19 @@ public class TaskPipeline implements AutoCloseable {
      * @throws IllegalArgumentException if a task with the same name has already been added
      */
     public TaskPipeline add(String taskName, Task<?, ?> task) {
-        logger.log(Level.FINE, "Adding task {0} to the pipeline.", taskName);
-        if (tasks.containsKey(taskName)) {
-            throw new IllegalArgumentException("Task '" + taskName + "' has already been added.");
+        writeLock.lock();
+        try {
+            logger.log(Level.FINE, "Adding task {0} to the pipeline.", taskName);
+            if (tasks.putIfAbsent(taskName, task) != null) {
+                throw new IllegalArgumentException("Task '" + taskName + "' has already been added.");
+            }
+            graph.computeIfAbsent(taskName, k -> new CopyOnWriteArrayList<>());
+            reverseGraph.put(taskName, new CopyOnWriteArrayList<>());
+            lastAddedTaskName.set(taskName);
+            return this;
+        } finally {
+            writeLock.unlock();
         }
-        tasks.put(taskName, task);
-        graph.put(taskName, new ArrayList<>());
-        reverseGraph.put(taskName, new ArrayList<>());
-        lastAddedTaskName = taskName;
-        return this;
     }
 
     /**
@@ -113,13 +122,17 @@ public class TaskPipeline implements AutoCloseable {
      * @throws IllegalArgumentException if a task with the same name has already been added
      */
     public TaskPipeline addTask(String taskName, Task<?, ?> task) {
-        if (tasks.containsKey(taskName)) {
-            throw new IllegalArgumentException("Task '" + taskName + "' has already been added.");
+        writeLock.lock();
+        try {
+            if (tasks.putIfAbsent(taskName, task) != null) {
+                throw new IllegalArgumentException("Task '" + taskName + "' has already been added.");
+            }
+            graph.computeIfAbsent(taskName, k -> new CopyOnWriteArrayList<>());
+            reverseGraph.computeIfAbsent(taskName, k -> new CopyOnWriteArrayList<>());
+            return this;
+        } finally {
+            writeLock.unlock();
         }
-        tasks.put(taskName, task);
-        graph.put(taskName, new ArrayList<>());
-        reverseGraph.put(taskName, new ArrayList<>());
-        return this;
     }
 
     /**
@@ -131,14 +144,29 @@ public class TaskPipeline implements AutoCloseable {
      * @throws IllegalStateException if called before {@link #add(String, Task)}
      */
     public TaskPipeline then(String nextTaskName, Task<?, ?> nextTask) {
-        if (lastAddedTaskName == null) {
-            throw new IllegalStateException("You must call 'add()' before calling 'then()'.");
+        writeLock.lock();
+        try {
+            String prev = lastAddedTaskName.get();
+            if (prev == null) {
+                throw new IllegalStateException("You must call 'add()' before calling 'then()'.");
+            }
+
+            // Inline addTask logic to avoid nested locking
+            if (tasks.putIfAbsent(nextTaskName, nextTask) != null) {
+                throw new IllegalArgumentException("Task '" + nextTaskName + "' has already been added.");
+            }
+            graph.computeIfAbsent(nextTaskName, k -> new CopyOnWriteArrayList<>());
+            reverseGraph.computeIfAbsent(nextTaskName, k -> new CopyOnWriteArrayList<>());
+
+            // Inline connect logic
+            graph.computeIfAbsent(prev, k -> new CopyOnWriteArrayList<>()).add(nextTaskName);
+            reverseGraph.computeIfAbsent(nextTaskName, k -> new CopyOnWriteArrayList<>()).add(prev);
+
+            this.lastAddedTaskName.set(nextTaskName);
+            return this;
+        } finally {
+            writeLock.unlock();
         }
-        addTask(nextTaskName, nextTask);
-        String fromTaskName = this.lastAddedTaskName;
-        connect(fromTaskName, nextTaskName);
-        this.lastAddedTaskName = nextTaskName;
-        return this;
     }
 
     /**
@@ -148,29 +176,33 @@ public class TaskPipeline implements AutoCloseable {
      * @param toTaskName   the child task name that depends on the parent
      * @return The pipeline instance for fluent chaining.
      * @throws IllegalArgumentException if task names are null or identical
-     * @throws IllegalStateException if either task has not been added yet
+     * @throws IllegalStateException    if either task has not been added yet
      */
     public TaskPipeline connect(String fromTaskName, String toTaskName) {
+        writeLock.lock();
+        try {
+            if (toTaskName == null || fromTaskName == null) {
+                throw new IllegalArgumentException("Task names cannot be null.");
+            }
 
-        if (toTaskName == null || fromTaskName == null) {
-            throw new IllegalArgumentException("Task names cannot be null.");
+            if (fromTaskName.equals(toTaskName)) {
+                throw new IllegalArgumentException("Cannot connect a task to itself: " + fromTaskName);
+            }
+
+            if (!tasks.containsKey(fromTaskName)) {
+                throw new IllegalStateException("The 'from' task '" + fromTaskName + "' must be added to the pipeline before connecting from it.");
+            }
+
+            if (!tasks.containsKey(toTaskName)) {
+                throw new IllegalStateException("The 'to' task '" + toTaskName + "' must be added to the pipeline before connecting to it.");
+            }
+
+            graph.computeIfAbsent(fromTaskName, k -> new CopyOnWriteArrayList<>()).add(toTaskName);
+            reverseGraph.computeIfAbsent(toTaskName, k -> new CopyOnWriteArrayList<>()).add(fromTaskName); // Maintain reverse adjacency for O(1) lookups
+            return this;
+        } finally {
+            writeLock.unlock();
         }
-
-        if (fromTaskName.equals(toTaskName)) {
-            throw new IllegalArgumentException("Cannot connect a task to itself: " + fromTaskName);
-        }
-
-        if (!tasks.containsKey(fromTaskName)) {
-            throw new IllegalStateException("The 'from' task '" + fromTaskName + "' must be added to the pipeline before connecting from it.");
-        }
-
-        if (!tasks.containsKey(toTaskName)) {
-            throw new IllegalStateException("The 'to' task '" + toTaskName + "' must be added to the pipeline before connecting to it.");
-        }
-
-        graph.get(fromTaskName).add(toTaskName);
-        reverseGraph.get(toTaskName).add(fromTaskName); // Maintain reverse adjacency for O(1) lookups
-        return this;
     }
 
     /**
@@ -181,56 +213,61 @@ public class TaskPipeline implements AutoCloseable {
      */
     @SuppressWarnings("unchecked")
     public CompletableFuture<Object> run(Object initialInput) {
-        PipelineContext context = new PipelineContext();
-        List<String> executionOrder = topologicalSort();
-        Map<String, CompletableFuture<Object>> results = new HashMap<>();
+        readLock.lock();
+        try {
+            PipelineContext context = new PipelineContext();
+            List<String> executionOrder = topologicalSort();
+            Map<String, CompletableFuture<Object>> results = new HashMap<>();
 
-        for (String taskName : executionOrder) {
-            Task<Object, Object> currentTask = (Task<Object, Object>) tasks.get(taskName);
-            List<String> predecessors = findPredecessorsFor(taskName);
+            for (String taskName : executionOrder) {
+                Task<Object, Object> currentTask = (Task<Object, Object>) tasks.get(taskName);
+                List<String> predecessors = findPredecessorsFor(taskName);
 
-            CompletableFuture<?>[] parentFutures = predecessors.stream()
+                CompletableFuture<?>[] parentFutures = predecessors.stream()
                     .map(results::get)
                     .toArray(CompletableFuture[]::new);
 
-            CompletableFuture<Void> allParentsDone = CompletableFuture.allOf(parentFutures);
+                CompletableFuture<Void> allParentsDone = CompletableFuture.allOf(parentFutures);
 
-            CompletableFuture<Object> currentFuture = allParentsDone.thenComposeAsync(v -> {
-                Object input = gatherInputsFromCompletedParents(predecessors, results, initialInput);
-                if (currentTask == null) {
-                    throw new TaskRunException("Task '" + taskName + "' was not found in the pipeline.");
-                }
+                CompletableFuture<Object> currentFuture = allParentsDone.thenComposeAsync(v -> {
+                    Object input = gatherInputsFromCompletedParents(predecessors, results, initialInput);
+                    if (currentTask == null) {
+                        throw new TaskRunException("Task '" + taskName + "' was not found in the pipeline.");
+                    }
 
-                if (currentTask.isCacheable()) {
-                    CacheKey cacheKey = new CacheKey(taskName, input);
-                    
-                    // Use computeIfAbsent to atomically check cache and compute if needed
-                    return futureCache.computeIfAbsent(cacheKey, k -> {
-                        logger.log(Level.FINE, "Executing task {0}, (cache miss).", taskName);
-                        CompletableFuture<Object> taskResultFuture = currentTask.execute(input, context);
-                        
-                        // Populate the object cache when the future completes
-                        return taskResultFuture.thenApply(result -> {
-                            cache.put(cacheKey, result);
-                            return result;
+                    if (currentTask.isCacheable()) {
+                        CacheKey cacheKey = new CacheKey(taskName, input);
+
+                        // Use computeIfAbsent to atomically check cache and compute if needed
+                        return futureCache.computeIfAbsent(cacheKey, k -> {
+                            logger.log(Level.FINE, "Executing task {0}, (cache miss).", taskName);
+                            CompletableFuture<Object> taskResultFuture = currentTask.execute(input, context);
+
+                            // Populate the object cache when the future completes
+                            return taskResultFuture.thenApply(result -> {
+                                cache.put(cacheKey, result);
+                                return result;
+                            });
                         });
-                    });
-                } else {
-                    logger.log(Level.FINE, "Executing task {0}, (cache miss).", taskName);
-                    return currentTask.execute(input, context);
-                }
+                    } else {
+                        logger.log(Level.FINE, "Executing task {0}, (cache miss).", taskName);
+                        return currentTask.execute(input, context);
+                    }
 
-            }, executor);
+                }, executor);
 
-            results.put(taskName, currentFuture);
+                results.put(taskName, currentFuture);
+            }
+
+            if (executionOrder.isEmpty()) {
+                return CompletableFuture.completedFuture(initialInput);
+            }
+
+            String lastTaskName = executionOrder.get(executionOrder.size() - 1);
+            return results.get(lastTaskName);
+        } finally {
+            readLock.unlock();
         }
-
-        if (executionOrder.isEmpty()) {
-            return CompletableFuture.completedFuture(initialInput);
-        }
-
-        String lastTaskName = executionOrder.get(executionOrder.size() - 1);
-        return results.get(lastTaskName);
     }
 
     /**
@@ -306,18 +343,18 @@ public class TaskPipeline implements AutoCloseable {
         }
 
         return predecessors.stream()
-                .collect(Collectors.toMap(
-                        name -> name,
-                        name -> results.get(name).join()
-                ));
+            .collect(Collectors.toMap(
+                name -> name,
+                name -> results.get(name).join()
+            ));
     }
 
     /**
      * Shuts down the internal executor if it was created by this TaskPipeline.
      * Call this method when you're done with the pipeline to prevent resource leaks.
      * This method will wait for currently executing tasks to complete, up to the configured timeout.
-     * 
-     * Note: If you provided a custom executor via constructor, you are responsible 
+     * <p>
+     * Note: If you provided a custom executor via constructor, you are responsible
      * for shutting it down yourself.
      */
     public void shutdown() {
@@ -326,8 +363,8 @@ public class TaskPipeline implements AutoCloseable {
             executor.shutdown();
             try {
                 if (!executor.awaitTermination(shutdownTimeoutSeconds, TimeUnit.SECONDS)) {
-                    logger.log(Level.WARNING, 
-                        "Executor did not terminate within {0} seconds, forcing shutdown", 
+                    logger.log(Level.WARNING,
+                        "Executor did not terminate within {0} seconds, forcing shutdown",
                         shutdownTimeoutSeconds);
                     shutdownNow();
                 } else {
@@ -350,14 +387,14 @@ public class TaskPipeline implements AutoCloseable {
             logger.log(Level.FINE, "Forcing immediate shutdown of TaskPipeline executor");
             List<Runnable> pendingTasks = executor.shutdownNow();
             if (!pendingTasks.isEmpty()) {
-                logger.log(Level.INFO, "Cancelled {0} pending tasks during forced shutdown", 
+                logger.log(Level.INFO, "Cancelled {0} pending tasks during forced shutdown",
                     pendingTasks.size());
             }
             try {
                 if (!executor.awaitTermination(shutdownNowTimeoutSeconds, TimeUnit.SECONDS)) {
-                    logger.log(Level.SEVERE, 
+                    logger.log(Level.SEVERE,
                         "Executor did not terminate after shutdownNow within {0} seconds. " +
-                        "Some threads may still be running.", 
+                            "Some threads may still be running.",
                         shutdownNowTimeoutSeconds);
                 } else {
                     logger.log(Level.FINE, "Forced shutdown completed");
@@ -373,7 +410,7 @@ public class TaskPipeline implements AutoCloseable {
      * Closes the TaskPipeline by gracefully shutting down the internal executor
      * if it was created by this instance. This method is called automatically
      * when using try-with-resources.
-     * 
+     *
      * <p>This is equivalent to calling {@link #shutdown()}.</p>
      */
     @Override
