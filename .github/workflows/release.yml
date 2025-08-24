@@ -16,6 +16,11 @@ jobs:
     runs-on: ubuntu-latest
     environment: build
     
+    # Minimal permissions for tagging only
+    permissions:
+      contents: write  # Required to create and push tags
+      actions: read    # Required to read workflow
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
