@@ -2,7 +2,7 @@ package dev.shaaf.jgraphlet;
 
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
+
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
@@ -36,7 +36,6 @@ public class TaskPipeline implements AutoCloseable {
     private final Map<String, Task<?, ?>> tasks = new ConcurrentHashMap<>();
     private final Map<String, List<String>> graph = new ConcurrentHashMap<>();
     private final Map<String, List<String>> reverseGraph = new ConcurrentHashMap<>(); // For O(1) predecessor lookups
-    private final Map<CacheKey, Object> cache = new ConcurrentHashMap<>();
     private final Map<CacheKey, CompletableFuture<Object>> futureCache = new ConcurrentHashMap<>();
     private final ExecutorService executor;
     private final boolean ownedExecutor;
@@ -243,11 +242,8 @@ public class TaskPipeline implements AutoCloseable {
                             logger.log(Level.FINE, "Executing task {0}, (cache miss).", taskName);
                             CompletableFuture<Object> taskResultFuture = currentTask.execute(input, context);
 
-                            // Populate the object cache when the future completes
-                            return taskResultFuture.thenApply(result -> {
-                                cache.put(cacheKey, result);
-                                return result;
-                            });
+                            // Return the task result future directly
+                            return taskResultFuture;
                         });
                     } else {
                         logger.log(Level.FINE, "Executing task {0}, (cache miss).", taskName);
