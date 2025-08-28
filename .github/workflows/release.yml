@@ -65,12 +65,12 @@ jobs:
         git commit -m "Release version ${{ env.RELEASE_VERSION }}" || echo "No changes to commit"
         
     - name: Run tests
-      run: mvn clean test -B -Djgraphlet.skipLargeFileTest=true
+      run: mvn clean test -B
       
     - name: Build artifacts for Central Portal
       run: |
         # Build and sign artifacts but don't deploy yet
-        mvn clean install -P release -B -Dgpg.skip=false -Djgraphlet.skipLargeFileTest=true
+        mvn clean install -P release -B -Dgpg.skip=false
       env:
         MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
         MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}

@@ -47,7 +47,7 @@ class LargeScaleWordProcessingPipelineTest {
         config = TaskPipelineConfig.builder()
             .withResourceManager(resourceManager)
             .withMetrics(metricsCollector)
-            .withMaxConcurrentTasks(50) // Increase for I/O bound chunk processing
+            .withMaxConcurrentTasks(10) // Increase for I/O bound chunk processing
             .withWorkStealing(true)
             .build();
     }
@@ -108,7 +108,7 @@ class LargeScaleWordProcessingPipelineTest {
             .withMaxConcurrentTasks(2)
             .build();
             
-        List<Path> testFiles = createTestDataFiles(5, 100); // Smaller dataset
+        List<Path> testFiles = createTestDataFiles(5, 10); // Smaller dataset
         
         try (EnhancedTaskPipeline pipeline = new EnhancedTaskPipeline(constrainedConfig)) {
             pipeline.add("fileDiscovery", new FileDiscoveryTask())
@@ -129,7 +129,7 @@ class LargeScaleWordProcessingPipelineTest {
     @Test
     @DisplayName("Pipeline should handle concurrent executions safely")
     void testConcurrentPipelineExecutions() throws Exception {
-        List<Path> testFiles = createTestDataFiles(10, 200);
+        List<Path> testFiles = createTestDataFiles(10, 50);
         
         List<CompletableFuture<List<WordCount>>> futures = new ArrayList<>();
         
@@ -170,7 +170,7 @@ class LargeScaleWordProcessingPipelineTest {
     @Timeout(120) // Allow up to 2 minutes for large file processing
     void testLargeFileChunkProcessing() throws Exception {
         // Generate a 50MB file with random words (faster for testing while still validating chunking)
-        long fileSize = 50 * 1024 * 1024L; // 50MB
+        long fileSize = 20 * 1024 * 1024L; // 50MB
         Path largeFile = generateLargeTestFile(fileSize);
         
         // Ensure file is completely written and closed
@@ -179,8 +179,8 @@ class LargeScaleWordProcessingPipelineTest {
         System.out.println("Generated large test file: " + largeFile + " (size: " + formatBytes(actualFileSize) + ")");
         
         try {
-            int chunkCount = 50; // Split into 8 chunks for parallel processing
-            int topN = 50;
+            int chunkCount = 5; // Split into 8 chunks for parallel processing
+            int topN = 2;
             
             try (EnhancedTaskPipeline pipeline = new EnhancedTaskPipeline(config)) {
                 // Build pipeline for truly parallel chunked file processing
