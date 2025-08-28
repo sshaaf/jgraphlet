@@ -1,5 +1,6 @@
-package dev.shaaf.jgraphlet;
+package dev.shaaf.jgraphlet.pipeline;
 
+import dev.shaaf.jgraphlet.task.Task;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -23,7 +24,7 @@ class TaskPipelinePerformanceTest {
         TaskPipeline pipeline = new TaskPipeline();
         
         // Create a simple task for testing
-        Task<String, String> simpleTask = (input, context) -> 
+        Task<String, String> simpleTask = (input, context) ->
             CompletableFuture.completedFuture(input + "-processed");
         
         Task<java.util.Map<String, Object>, String> aggregatorTask = (inputs, context) ->

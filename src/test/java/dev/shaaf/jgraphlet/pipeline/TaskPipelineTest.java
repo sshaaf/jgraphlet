@@ -1,5 +1,8 @@
-package dev.shaaf.jgraphlet;
+package dev.shaaf.jgraphlet.pipeline;
 
+import dev.shaaf.jgraphlet.exception.TaskRunException;
+import dev.shaaf.jgraphlet.task.SyncTask;
+import dev.shaaf.jgraphlet.task.Task;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

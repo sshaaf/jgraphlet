@@ -8,6 +8,7 @@ import dev.shaaf.jgraphlet.task.Task;
 
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
 /**
@@ -86,6 +87,26 @@ public class EnhancedTaskPipeline extends TaskPipeline {
     
     /**
      * Builder for configuring fan-out behavior.
+     * 
+     * <p><strong>Thread Safety Notice:</strong> This builder is designed for single-threaded use.
+     * Each FanOutBuilder instance should be used by only one thread and should not be shared
+     * between threads. For concurrent pipeline construction, create separate pipelines in
+     * each thread rather than sharing builder instances.</p>
+     * 
+     * <p><strong>Recommended Usage Pattern:</strong></p>
+     * <pre>{@code
+     * // SAFE: Each thread creates its own pipeline and builder
+     * try (EnhancedTaskPipeline pipeline = new EnhancedTaskPipeline()) {
+     *     pipeline.add("input", inputTask)
+     *            .fanOut("processing")
+     *                .withTaskFactory(createProcessingTasks)
+     *                .withMaxParallelism(4)
+     *            .fanIn("output", outputTask);
+     * }
+     * 
+     * // UNSAFE: Sharing builder between threads
+     * FanOutBuilder builder = pipeline.fanOut("shared"); // DON'T DO THIS
+     * }</pre>
      */
     public static class FanOutBuilder<I, O> {
         private final EnhancedTaskPipeline pipeline;
@@ -95,18 +116,46 @@ public class EnhancedTaskPipeline extends TaskPipeline {
         private boolean loadBalancing = false;
         private boolean workStealing = false;
         
+        // Track the thread that created this builder for safety checks
+        private final long creatingThreadId = Thread.currentThread().getId();
+        
         FanOutBuilder(EnhancedTaskPipeline pipeline, String taskName) {
             this.pipeline = pipeline;
             this.taskName = taskName;
         }
         
         /**
+         * Checks that this builder is accessed from the same thread that created it.
+         * This helps catch incorrect usage patterns early.
+         */
+        private void checkSingleThreadedAccess() {
+            long currentThreadId = Thread.currentThread().getId();
+            if (currentThreadId != creatingThreadId) {
+                throw new IllegalStateException(
+                    "FanOutBuilder instances should not be shared between threads. " +
+                    "Created on thread " + creatingThreadId + " but accessed from thread " + currentThreadId + ". " +
+                    "Create separate pipeline instances for each thread instead."
+                );
+            }
+        }
+        
+        /**
          * Sets a factory function that creates tasks dynamically based on input.
          * 
-         * @param factory Function that creates tasks from input
+         * <p><strong>Thread Safety:</strong> The provided factory function should be thread-safe
+         * as it may be called from multiple threads during parallel execution. The factory
+         * should not maintain mutable state unless properly synchronized.</p>
+         * 
+         * @param factory Function that creates tasks from input (must be thread-safe)
          * @return This builder for method chaining
+         * @throws IllegalStateException if this builder is accessed from multiple threads
          */
         public FanOutBuilder<I, O> withTaskFactory(Function<Object, List<Task<?, ?>>> factory) {
+            // Add basic thread safety check
+            if (this.taskFactory != null && factory != null) {
+                // Builder state is being modified - ensure single-threaded usage
+                checkSingleThreadedAccess();
+            }
             this.taskFactory = factory;
             return this;
         }
@@ -118,6 +167,7 @@ public class EnhancedTaskPipeline extends TaskPipeline {
          * @return This builder for method chaining
          */
         public FanOutBuilder<I, O> withMaxParallelism(int maxParallelism) {
+            checkSingleThreadedAccess();
             this.maxParallelism = maxParallelism;
             return this;
         }
@@ -129,6 +179,7 @@ public class EnhancedTaskPipeline extends TaskPipeline {
          * @return This builder for method chaining
          */
         public FanOutBuilder<I, O> withLoadBalancing(boolean loadBalancing) {
+            checkSingleThreadedAccess();
             this.loadBalancing = loadBalancing;
             return this;
         }
@@ -140,6 +191,7 @@ public class EnhancedTaskPipeline extends TaskPipeline {
          * @return This builder for method chaining
          */
         public FanOutBuilder<I, O> withWorkStealing(boolean workStealing) {
+            checkSingleThreadedAccess();
             this.workStealing = workStealing;
             return this;
         }
@@ -152,6 +204,8 @@ public class EnhancedTaskPipeline extends TaskPipeline {
          * @return The pipeline for method chaining
          */
         public EnhancedTaskPipeline fanIn(String aggregatorName, Task<List<Object>, O> aggregator) {
+            checkSingleThreadedAccess();
+            
             // Store fan-out configuration
             FanOutConfig config = new FanOutConfig(taskFactory, maxParallelism, loadBalancing, workStealing);
             pipeline.fanOutConfigs.put(taskName, config);
@@ -245,7 +299,8 @@ public class EnhancedTaskPipeline extends TaskPipeline {
     }
     
     /**
-     * Wrapper for resource-managed task execution.
+     * Thread-safe wrapper for resource-managed task execution.
+     * Uses atomic operations to prevent race conditions and resource leaks.
      */
     private static class ResourceManagedTask<I, O> implements Task<I, O> {
         private final Task<I, O> delegate;
@@ -262,27 +317,55 @@ public class EnhancedTaskPipeline extends TaskPipeline {
                 ResourceAwareTask<I, O> resourceAware = (ResourceAwareTask<I, O>) delegate;
                 ResourceRequirements requirements = resourceAware.estimateResources(input);
                 
-                // Check if resources are available
-                if (!resourceManager.canSchedule(requirements)) {
-                    // Notify task about resource constraints
+                // Use atomic flag to prevent double resource release
+                AtomicBoolean resourcesReleased = new AtomicBoolean(false);
+                
+                // Atomic check-and-reserve operation
+                if (!resourceManager.tryReserveResources(requirements)) {
+                    // Resources not available - notify task about constraints
                     ResourceConstraint constraint = resourceManager.getCurrentConstraints();
                     resourceAware.onResourceConstraint(constraint);
+                    
+                    // Execute without resource reservation
+                    return delegate.execute(input, context);
                 }
                 
-                // Reserve resources
-                resourceManager.reserveResources(requirements);
-                
-                try {
-                    return delegate.execute(input, context).whenComplete((result, throwable) -> {
-                        // Release resources when complete
-                        resourceManager.releaseResources(requirements);
+                // Resources successfully reserved - ensure they're released exactly once
+                return delegate.execute(input, context)
+                    .whenComplete((result, throwable) -> {
+                        // Safe resource release - only the first call will actually release
+                        safeReleaseResources(requirements, resourcesReleased);
+                    })
+                    .exceptionally(throwable -> {
+                        // Ensure resources are released even on exceptions
+                        safeReleaseResources(requirements, resourcesReleased);
+                        if (throwable instanceof RuntimeException) {
+                            throw (RuntimeException) throwable;
+                        }
+                        throw new RuntimeException(throwable);
                     });
-                } catch (Exception e) {
-                    resourceManager.releaseResources(requirements);
-                    throw e;
-                }
             } else {
                 return delegate.execute(input, context);
+            }
+        }
+        
+        /**
+         * Thread-safe resource release using atomic flag to prevent double-release.
+         */
+        private void safeReleaseResources(ResourceRequirements requirements, AtomicBoolean resourcesReleased) {
+            if (resourcesReleased.compareAndSet(false, true)) {
+                try {
+                    if (resourceManager.safeReleaseResources(requirements)) {
+                        // Resources successfully released
+                    } else {
+                        // Resources were already released or couldn't be released
+                        // This is handled gracefully by the resource manager
+                    }
+                } catch (Exception e) {
+                    // Log error but don't propagate to avoid masking original exceptions
+                    // In a real implementation, this would use a logger
+                    System.err.println("Warning: Failed to release resources: " + e.getMessage());
+                }
             }
         }
     }

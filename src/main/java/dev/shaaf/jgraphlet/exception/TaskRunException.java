@@ -1,4 +1,4 @@
-package dev.shaaf.jgraphlet;
+package dev.shaaf.jgraphlet.exception;
 
 /**
  * Unchecked exception indicating a failure while running a task within the pipeline.

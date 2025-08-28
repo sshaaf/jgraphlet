@@ -1,5 +1,6 @@
-package dev.shaaf.jgraphlet;
+package dev.shaaf.jgraphlet.pipeline;
 
+import dev.shaaf.jgraphlet.task.Task;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledForJreRange;
 import org.junit.jupiter.api.condition.JRE;

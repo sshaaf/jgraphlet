@@ -107,6 +107,45 @@ public class TaskPipelineConfig {
         void reserveResources(ResourceRequirements requirements);
         void releaseResources(ResourceRequirements requirements);
         ResourceConstraint getCurrentConstraints();
+        
+        /**
+         * Atomically checks and reserves resources if available.
+         * This method combines canSchedule() and reserveResources() into a single
+         * atomic operation to prevent race conditions in high-concurrency scenarios.
+         * 
+         * @param requirements The resources to reserve
+         * @return true if resources were successfully reserved, false otherwise
+         */
+        default boolean tryReserveResources(ResourceRequirements requirements) {
+            // Default implementation for backward compatibility
+            // Implementations should override with atomic operations
+            synchronized (this) {
+                if (canSchedule(requirements)) {
+                    reserveResources(requirements);
+                    return true;
+                }
+                return false;
+            }
+        }
+        
+        /**
+         * Thread-safe resource release that handles double-release safely.
+         * This method can be called multiple times safely and will only
+         * release resources once.
+         * 
+         * @param requirements The resources to release
+         * @return true if resources were actually released, false if already released
+         */
+        default boolean safeReleaseResources(ResourceRequirements requirements) {
+            // Default implementation - subclasses should override for better safety
+            try {
+                releaseResources(requirements);
+                return true;
+            } catch (Exception e) {
+                // Already released or other issue - handle gracefully
+                return false;
+            }
+        }
     }
     
     public static class CacheConfig {

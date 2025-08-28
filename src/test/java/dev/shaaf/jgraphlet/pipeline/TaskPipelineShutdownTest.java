@@ -1,5 +1,6 @@
-package dev.shaaf.jgraphlet;
+package dev.shaaf.jgraphlet.pipeline;
 
+import dev.shaaf.jgraphlet.task.Task;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.CompletableFuture;
@@ -117,7 +118,7 @@ class TaskPipelineShutdownTest {
         TaskPipeline pipeline = new TaskPipeline(gracefulTimeout, forcedTimeout);
         
         // Create a simple task that completes quickly
-        Task<String, String> quickTask = (input, context) -> 
+        Task<String, String> quickTask = (input, context) ->
             CompletableFuture.completedFuture("done quickly");
         
         // Act
