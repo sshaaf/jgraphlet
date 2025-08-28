@@ -180,7 +180,7 @@ class LargeScaleWordProcessingPipelineTest {
         
         try {
             int chunkCount = 50; // Split into 8 chunks for parallel processing
-            int topN = 20;
+            int topN = 50;
             
             try (EnhancedTaskPipeline pipeline = new EnhancedTaskPipeline(config)) {
                 // Build pipeline for truly parallel chunked file processing

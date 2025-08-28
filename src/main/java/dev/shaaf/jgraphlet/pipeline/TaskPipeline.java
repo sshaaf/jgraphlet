@@ -138,6 +138,16 @@ public class TaskPipeline implements AutoCloseable {
     }
 
     /**
+     * Checks if a task with the given name has been added to this pipeline.
+     *
+     * @param taskName the name of the task to check
+     * @return true if a task with the given name exists in this pipeline, false otherwise
+     */
+    public boolean hasTask(String taskName) {
+        return tasks.containsKey(taskName);
+    }
+
+    /**
      * Creates a linear dependency between the previously added task and the next task.
      *
      * @param nextTaskName the name for the next task to be added and connected

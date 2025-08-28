@@ -4,6 +4,7 @@ import dev.shaaf.jgraphlet.task.Task;
 import dev.shaaf.jgraphlet.task.resource.ResourceAwareTask;
 import dev.shaaf.jgraphlet.task.resource.ResourceConstraint;
 import dev.shaaf.jgraphlet.task.resource.ResourceRequirements;
+import dev.shaaf.jgraphlet.pipeline.EnhancedTaskPipeline.FanOutBuilder;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.RepeatedTest;
@@ -220,7 +221,97 @@ class EnhancedTaskPipelineThreadSafetyTest {
         assertTrue(exceptions.isEmpty(), "No exceptions should occur: " + exceptions);
         assertEquals(threadCount, successCount.get(), "All threads should succeed");
     }
-    
+
+    @Test
+    @DisplayName("CRITICAL: Fan-out builder should handle concurrent configuration without deadlocks")
+    void testFanOutBuilderConcurrentConfiguration() throws InterruptedException {
+        // This is the test that reproduces the race condition you identified
+        // Multiple threads will concurrently try to configure the SAME fan-out builder
+        EnhancedTaskPipeline pipeline = new EnhancedTaskPipeline();
+
+        int threadCount = 10;
+        AtomicInteger successCount = new AtomicInteger(0);
+        List<Exception> exceptions = Collections.synchronizedList(new ArrayList<>());
+
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
+
+        // All threads will get the SAME builder instance
+        for (int i = 0; i < threadCount; i++) {
+            final int threadId = i;
+            CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                try {
+                    // All threads get the SAME builder instance (this was the race condition!)
+                    FanOutBuilder<String, String> builder = pipeline.fanOut("sharedFanOut");
+
+                    // Each thread tries to configure the builder differently
+                    builder.withTaskFactory((input) -> {
+                        // Create a task that includes the thread ID to verify uniqueness
+                        return List.of((Task<String, String>) (input2, context) ->
+                            CompletableFuture.supplyAsync(() -> input2 + "_thread_" + threadId));
+                    });
+
+                    // Each thread sets different parallelism
+                    builder.withMaxParallelism(threadId + 1);
+
+                    // Only one thread should successfully call fanIn (others should be ignored)
+                    if (threadId == 0) { // Let thread 0 complete the configuration
+                        builder.fanIn("aggregator", (List<Object> inputs, PipelineContext context) ->
+                            CompletableFuture.supplyAsync(() ->
+                                inputs.stream()
+                                    .map(Object::toString)
+                                    .reduce("", (a, b) -> a + "|" + b)));
+                    }
+
+                    successCount.incrementAndGet();
+
+                } catch (Exception e) {
+                    exceptions.add(e);
+                }
+            }, executor);
+
+            futures.add(future);
+        }
+
+        // Wait for all threads to complete
+        CompletableFuture<Void> allFutures = CompletableFuture.allOf(
+            futures.toArray(new CompletableFuture[0]));
+
+        try {
+            allFutures.get(15, TimeUnit.SECONDS); // Longer timeout for this critical test
+        } catch (TimeoutException e) {
+            fail("CRITICAL: Deadlock detected in fan-out builder concurrent configuration!");
+        } catch (ExecutionException e) {
+            fail("Test failed with execution exception: " + e.getCause());
+        }
+
+        executor.shutdown();
+        assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+
+        // Verify results
+        assertTrue(exceptions.isEmpty(), "No exceptions should occur in concurrent fan-out configuration: " + exceptions);
+        assertEquals(threadCount, successCount.get(), "All threads should complete successfully");
+
+        // Verify the pipeline can actually execute
+        try {
+            // Add a simple input task since fan-out expects input
+            pipeline.add("input", (String input, PipelineContext context) ->
+                CompletableFuture.completedFuture(input));
+
+            // Connect input to fan-out
+            pipeline.connect("input", "sharedFanOut");
+
+            Object result = pipeline.run("test_input").join();
+            assertNotNull(result, "Pipeline should execute successfully after concurrent configuration");
+            System.out.println("Pipeline executed successfully with result: " + result);
+        } catch (Exception e) {
+            // Print more details about the failure
+            System.err.println("Pipeline execution failed: " + e.getMessage());
+            e.printStackTrace();
+            fail("Pipeline execution failed after concurrent configuration: " + e.getMessage());
+        }
+    }
+
     @Test
     @DisplayName("Resource manager should handle concurrent resource operations safely")
     void testResourceManagerThreadSafety() throws InterruptedException {

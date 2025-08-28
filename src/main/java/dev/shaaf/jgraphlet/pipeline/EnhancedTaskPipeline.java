@@ -25,7 +25,7 @@ import java.util.function.Function;
 public class EnhancedTaskPipeline extends TaskPipeline {
     
     private final TaskPipelineConfig config;
-    private final Map<String, FanOutConfig> fanOutConfigs = new ConcurrentHashMap<>();
+    private final Map<String, FanOutBuilder<?, ?>> inProgressFanOuts = new ConcurrentHashMap<>();
     
     /**
      * Creates an EnhancedTaskPipeline with default configuration.
@@ -40,20 +40,36 @@ public class EnhancedTaskPipeline extends TaskPipeline {
      * @param config The pipeline configuration
      */
     public EnhancedTaskPipeline(TaskPipelineConfig config) {
-        super(config.getExecutorService() != null ? 
-              config.getExecutorService() : 
-              Executors.newWorkStealingPool());
+        super(config.getExecutorService() != null ?
+              config.getExecutorService() :
+              Executors.newWorkStealingPool()); // Create default executor if none provided
         this.config = config;
     }
     
     /**
-     * Creates a fan-out configuration for parallel task execution.
-     * 
-     * @param taskName The name of the fan-out stage
-     * @return A FanOutBuilder for configuring the fan-out behavior
+     * Factory method for creating or retrieving a thread-safe FanOutBuilder.
+     * Ensures that for any given fan-out task name, only one builder instance
+     * is created and shared across threads.
+     *
+     * @param taskName The unique name for the fan-out task.
+     * @return A thread-safe FanOutBuilder instance.
      */
+    @SuppressWarnings("unchecked")
     public <I, O> FanOutBuilder<I, O> fanOut(String taskName) {
-        return new FanOutBuilder<>(this, taskName);
+        // Atomically create and store the builder to prevent race conditions.
+        // This ensures all threads get the same builder instance for the same name.
+        return (FanOutBuilder<I, O>) inProgressFanOuts.computeIfAbsent(taskName,
+                key -> new FanOutBuilder<>(this, key));
+    }
+
+    /**
+     * Called by the FanOutBuilder to notify the pipeline that its definition
+     * is complete and has been added to the task graph.
+     *
+     * @param taskName The name of the completed fan-out task.
+     */
+    void completeFanOut(String taskName) {
+        inProgressFanOuts.remove(taskName);
     }
     
     /**
@@ -71,10 +87,16 @@ public class EnhancedTaskPipeline extends TaskPipeline {
      * Configuration for fan-out behavior.
      */
     private static class FanOutConfig {
-        final Function<Object, List<Task<?, ?>>> taskFactory;
-        final int maxParallelism;
-        final boolean loadBalancing;
-        final boolean workStealing;
+        Function<Object, List<Task<?, ?>>> taskFactory;
+        int maxParallelism;
+        boolean loadBalancing;
+        boolean workStealing;
+        
+        FanOutConfig() {
+            this.maxParallelism = Runtime.getRuntime().availableProcessors();
+            this.loadBalancing = false;
+            this.workStealing = false;
+        }
         
         FanOutConfig(Function<Object, List<Task<?, ?>>> taskFactory, 
                     int maxParallelism, boolean loadBalancing, boolean workStealing) {
@@ -86,155 +108,126 @@ public class EnhancedTaskPipeline extends TaskPipeline {
     }
     
     /**
-     * Builder for configuring fan-out behavior.
-     * 
-     * <p><strong>Thread Safety Notice:</strong> This builder is designed for single-threaded use.
-     * Each FanOutBuilder instance should be used by only one thread and should not be shared
-     * between threads. For concurrent pipeline construction, create separate pipelines in
-     * each thread rather than sharing builder instances.</p>
-     * 
-     * <p><strong>Recommended Usage Pattern:</strong></p>
-     * <pre>{@code
-     * // SAFE: Each thread creates its own pipeline and builder
-     * try (EnhancedTaskPipeline pipeline = new EnhancedTaskPipeline()) {
-     *     pipeline.add("input", inputTask)
-     *            .fanOut("processing")
-     *                .withTaskFactory(createProcessingTasks)
-     *                .withMaxParallelism(4)
-     *            .fanIn("output", outputTask);
-     * }
-     * 
-     * // UNSAFE: Sharing builder between threads
-     * FanOutBuilder builder = pipeline.fanOut("shared"); // DON'T DO THIS
-     * }</pre>
+     * A thread-safe builder for creating fan-out/fan-in patterns.
+     * This class is now designed to be safely used by multiple threads to
+     * define a single fan-out operation.
      */
     public static class FanOutBuilder<I, O> {
         private final EnhancedTaskPipeline pipeline;
         private final String taskName;
         private Function<Object, List<Task<?, ?>>> taskFactory;
-        private int maxParallelism = Runtime.getRuntime().availableProcessors();
-        private boolean loadBalancing = false;
-        private boolean workStealing = false;
-        
-        // Track the thread that created this builder for safety checks
-        private final long creatingThreadId = Thread.currentThread().getId();
-        
+        private FanOutConfig fanOutConfig = new FanOutConfig();
+
         FanOutBuilder(EnhancedTaskPipeline pipeline, String taskName) {
             this.pipeline = pipeline;
             this.taskName = taskName;
         }
-        
+
         /**
-         * Checks that this builder is accessed from the same thread that created it.
-         * This helps catch incorrect usage patterns early.
+         * Configures the factory function used to generate parallel tasks.
+         * This method is thread-safe.
+         *
+         * @param factory A function that takes an input and returns a list of tasks to be executed in parallel.
+         * @return This builder for method chaining.
          */
-        private void checkSingleThreadedAccess() {
-            long currentThreadId = Thread.currentThread().getId();
-            if (currentThreadId != creatingThreadId) {
-                throw new IllegalStateException(
-                    "FanOutBuilder instances should not be shared between threads. " +
-                    "Created on thread " + creatingThreadId + " but accessed from thread " + currentThreadId + ". " +
-                    "Create separate pipeline instances for each thread instead."
-                );
-            }
-        }
-        
-        /**
-         * Sets a factory function that creates tasks dynamically based on input.
-         * 
-         * <p><strong>Thread Safety:</strong> The provided factory function should be thread-safe
-         * as it may be called from multiple threads during parallel execution. The factory
-         * should not maintain mutable state unless properly synchronized.</p>
-         * 
-         * @param factory Function that creates tasks from input (must be thread-safe)
-         * @return This builder for method chaining
-         * @throws IllegalStateException if this builder is accessed from multiple threads
-         */
-        public FanOutBuilder<I, O> withTaskFactory(Function<Object, List<Task<?, ?>>> factory) {
-            // Add basic thread safety check
-            if (this.taskFactory != null && factory != null) {
-                // Builder state is being modified - ensure single-threaded usage
-                checkSingleThreadedAccess();
-            }
+        public synchronized FanOutBuilder<I, O> withTaskFactory(Function<Object, List<Task<?, ?>>> factory) {
             this.taskFactory = factory;
             return this;
         }
-        
+
         /**
-         * Sets the maximum parallelism for the fan-out stage.
-         * 
-         * @param maxParallelism Maximum number of parallel tasks
-         * @return This builder for method chaining
+         * Sets the maximum number of tasks to execute in parallel.
+         * This method is thread-safe.
+         *
+         * @param maxParallelism The maximum degree of parallelism.
+         * @return This builder for method chaining.
          */
-        public FanOutBuilder<I, O> withMaxParallelism(int maxParallelism) {
-            checkSingleThreadedAccess();
-            this.maxParallelism = maxParallelism;
+        public synchronized FanOutBuilder<I, O> withMaxParallelism(int maxParallelism) {
+            this.fanOutConfig.maxParallelism = maxParallelism;
+            return this;
+        }
+
+        /**
+         * Enables or disables load balancing for the fan-out tasks.
+         * This method is thread-safe.
+         *
+         * @param enabled true to enable load balancing.
+         * @return This builder for method chaining.
+         */
+        public synchronized FanOutBuilder<I, O> withLoadBalancing(boolean enabled) {
+            this.fanOutConfig.loadBalancing = enabled;
+            return this;
+        }
+
+        /**
+         * Enables or disables work-stealing for the fan-out tasks.
+         * This method is thread-safe.
+         *
+         * @param enabled true to enable work-stealing.
+         * @return This builder for method chaining.
+         */
+        public synchronized FanOutBuilder<I, O> withWorkStealing(boolean enabled) {
+            this.fanOutConfig.workStealing = enabled;
             return this;
         }
         
         /**
-         * Enables load balancing for the fan-out stage.
-         * 
-         * @param loadBalancing Whether to enable load balancing
-         * @return This builder for method chaining
+         * Finalizes the fan-out configuration and defines the fan-in task
+         * that will aggregate the results. This method is thread-safe.
+         *
+         * @param fanInTaskName The name of the aggregator task.
+         * @param aggregator    The task that will process the list of results from the fan-out tasks.
+         * @return The pipeline for continued chaining.
          */
-        public FanOutBuilder<I, O> withLoadBalancing(boolean loadBalancing) {
-            checkSingleThreadedAccess();
-            this.loadBalancing = loadBalancing;
-            return this;
-        }
-        
-        /**
-         * Enables work stealing for the fan-out stage.
-         * 
-         * @param workStealing Whether to enable work stealing
-         * @return This builder for method chaining
-         */
-        public FanOutBuilder<I, O> withWorkStealing(boolean workStealing) {
-            checkSingleThreadedAccess();
-            this.workStealing = workStealing;
-            return this;
-        }
-        
-        /**
-         * Completes the fan-out configuration and returns the pipeline.
-         * 
-         * @param aggregatorName Name of the fan-in aggregator task
-         * @param aggregator Task that combines results from parallel execution
-         * @return The pipeline for method chaining
-         */
-        public EnhancedTaskPipeline fanIn(String aggregatorName, Task<List<Object>, O> aggregator) {
-            checkSingleThreadedAccess();
-            
-            // Store fan-out configuration
-            FanOutConfig config = new FanOutConfig(taskFactory, maxParallelism, loadBalancing, workStealing);
-            pipeline.fanOutConfigs.put(taskName, config);
-            
-            // Add a special fan-out task that handles the parallel execution
-            FanOutTask fanOutTask = new FanOutTask(config);
-            pipeline.add(taskName, fanOutTask);
-            
-            // Add the aggregator task
-            return (EnhancedTaskPipeline) pipeline.add(aggregatorName, aggregator);
+        public synchronized TaskPipeline fanIn(String fanInTaskName, Task<List<Object>, O> aggregator) {
+            if (taskFactory == null) {
+                throw new IllegalStateException("A task factory must be provided before defining the fan-in.");
+            }
+
+            // Use atomic check-and-set pattern to prevent race conditions
+            try {
+                // Create and add the single FanOutTask which will dynamically create child tasks.
+                FanOutTask<I, O> fanOutTask = new FanOutTask<>(taskFactory, fanOutConfig);
+                pipeline.add(taskName, fanOutTask);
+
+                // The Aggregator task connects to the FanOutTask, creating the fan-in dependency.
+                pipeline.add(fanInTaskName, aggregator);
+                pipeline.connect(taskName, fanInTaskName);
+
+                // Notify the pipeline that this fan-out definition is complete.
+                pipeline.completeFanOut(taskName);
+
+                return pipeline;
+            } catch (IllegalArgumentException e) {
+                // Another thread already added this task - check if it's our expected task
+                if (e.getMessage().contains("has already been added") && pipeline.hasTask(taskName)) {
+                    // Another thread successfully completed this fan-out definition
+                    return pipeline;
+                }
+                // Re-throw if it's a different error
+                throw e;
+            }
         }
     }
     
     /**
      * Internal task that handles fan-out execution.
      */
-    private static class FanOutTask implements Task<Object, List<Object>> {
+    private static class FanOutTask<I, O> implements Task<I, List<O>> {
+        private final Function<Object, List<Task<?, ?>>> taskFactory;
         private final FanOutConfig config;
         
-        FanOutTask(FanOutConfig config) {
+        FanOutTask(Function<Object, List<Task<?, ?>>> taskFactory, FanOutConfig config) {
+            this.taskFactory = taskFactory;
             this.config = config;
         }
         
         @Override
-        public CompletableFuture<List<Object>> execute(Object input, PipelineContext context) {
+        public CompletableFuture<List<O>> execute(I input, PipelineContext context) {
             return CompletableFuture.supplyAsync(() -> {
                 try {
                     // Create parallel tasks using the factory
-                    List<Task<?, ?>> parallelTasks = config.taskFactory.apply(input);
+                    List<Task<?, ?>> parallelTasks = taskFactory.apply(input);
                     
                     // Limit parallelism if configured
                     if (parallelTasks.size() > config.maxParallelism) {
@@ -243,11 +236,11 @@ public class EnhancedTaskPipeline extends TaskPipeline {
                     }
                     
                     // Execute tasks in parallel
-                    List<CompletableFuture<Object>> futures = new ArrayList<>();
+                    List<CompletableFuture<O>> futures = new ArrayList<>();
                     for (Task<?, ?> task : parallelTasks) {
                         @SuppressWarnings("unchecked")
-                        Task<Object, Object> typedTask = (Task<Object, Object>) task;
-                        CompletableFuture<Object> future = typedTask.execute(input, context);
+                        Task<I, O> typedTask = (Task<I, O>) task;
+                        CompletableFuture<O> future = typedTask.execute(input, context);
                         futures.add(future);
                     }
                     
@@ -256,8 +249,8 @@ public class EnhancedTaskPipeline extends TaskPipeline {
                         futures.toArray(new CompletableFuture[0]));
                     
                     return allComplete.thenApply(v -> {
-                        List<Object> results = new ArrayList<>();
-                        for (CompletableFuture<Object> future : futures) {
+                        List<O> results = new ArrayList<>();
+                        for (CompletableFuture<O> future : futures) {
                             try {
                                 results.add(future.get());
                             } catch (Exception e) {
