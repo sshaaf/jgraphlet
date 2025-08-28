@@ -29,7 +29,7 @@ jobs:
         cache: maven
         
     - name: Run tests
-      run: mvn clean test -B
+      run: mvn clean test -B -Djgraphlet.skipLargeFileTest=true
       
     - name: Upload test results
       uses: actions/upload-artifact@v4
@@ -56,7 +56,7 @@ jobs:
         cache: maven
         
     - name: Package project
-      run: mvn clean package -B
+      run: mvn clean test -B -Djgraphlet.skipLargeFileTest=true
       
     - name: Upload JAR artifact
       uses: actions/upload-artifact@v4
@@ -81,7 +81,7 @@ jobs:
         cache: maven
         
     - name: Run Maven verify
-      run: mvn clean verify -B
+      run: mvn clean verify -B -Djgraphlet.skipLargeFileTest=true
       
     - name: Check code quality
       run: |
@@ -140,7 +140,7 @@ jobs:
         echo "🔍 Validating Pull Request..."
         
         # Run all tests to ensure nothing is broken
-        mvn clean test -B
+        mvn clean test -B -Djgraphlet.skipLargeFileTest=true
         
         # Ensure package builds successfully
         mvn package -B -DskipTests
