@@ -1,5 +1,6 @@
 package dev.shaaf.jgraphlet;
 
+import dev.shaaf.jgraphlet.pipeline.PipelineContext;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;

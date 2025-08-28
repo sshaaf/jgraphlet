@@ -1,4 +1,4 @@
-package dev.shaaf.jgraphlet;
+package dev.shaaf.jgraphlet.pipeline;
 
 import java.util.*;
 

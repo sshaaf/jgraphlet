@@ -1,4 +1,7 @@
-package dev.shaaf.jgraphlet;
+package dev.shaaf.jgraphlet.task;
+
+import dev.shaaf.jgraphlet.pipeline.PipelineContext;
+import dev.shaaf.jgraphlet.exception.TaskRunException;
 
 import java.util.concurrent.CompletableFuture;
 

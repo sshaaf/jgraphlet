@@ -1,4 +1,7 @@
-package dev.shaaf.jgraphlet;
+package dev.shaaf.jgraphlet.pipeline;
+
+import dev.shaaf.jgraphlet.exception.TaskRunException;
+import dev.shaaf.jgraphlet.task.Task;
 
 import java.util.*;
 import java.util.concurrent.*;
